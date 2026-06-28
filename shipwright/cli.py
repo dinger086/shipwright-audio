@@ -4,7 +4,7 @@ sounds/, run this, listen.
     shipwright                 list all sounds
     shipwright sea_bed         render one -> output/sea_bed.wav
     shipwright all             render everything
-    shipwright sea_bed --ogg   also write a Godot-ready .ogg
+    shipwright sea_bed --ogg   also write a Vorbis .ogg
     shipwright --watch sea_bed re-render on every save (tight loop)
 
 Sounds are loaded from ./sounds and written to ./output relative to the
@@ -88,7 +88,7 @@ def build_parser():
     p.add_argument("target", nargs="?",
                    help="sound name to render, or 'all'. Omit to list sounds.")
     p.add_argument("--ogg", action="store_true",
-                   help="also write a Godot-ready .ogg next to the .wav")
+                   help="also write a Vorbis .ogg next to the .wav")
     p.add_argument("--watch", action="store_true",
                    help="re-render TARGET on every save (Ctrl-C to stop)")
     p.add_argument("--version", action="version",

@@ -95,12 +95,6 @@ sound, swap a `Track`'s instrument for either:
 - **VST/AU**: `engine.make_plugin_processor("name", "/path/to/plugin.vst3")`,
   then `add_midi_note(...)` exactly like the Faust instruments.
 
-## Godot
-
-`--ogg` writes Vorbis files Godot imports directly. For an idle game, render
-short stems and loop/layer them at runtime instead of one long track, so the
-ambient bed never gets stale.
-
 ## License
 
 `shipwright-audio` is MIT licensed. Its DawDreamer dependency is GPLv3; review
