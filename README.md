@@ -29,7 +29,7 @@ Create a project with one runnable starter sound:
 ```bash
 shipwright init my_game_audio
 cd my_game_audio
-shipwright starter_blip
+shipwright build
 ```
 
 Generated layout:
@@ -49,33 +49,44 @@ files are not overwritten unless you pass `--force`.
 
 ## CLI
 
-`shipwright.toml` marks the project root. `shipwright` walks up from the current
-directory to find it, loads the Python files in `sounds/`, and writes renders to
-`output/` (both relative to that root, so you can run it from a subdirectory).
-Point it at a project elsewhere with `-C/--project`:
+`shipwright.toml` marks the project root and describes how the project builds.
+`shipwright` walks up from the current directory to find it, loads the Python
+files in `sounds/`, and writes renders to `output/` (both relative to that root,
+so you can run it from a subdirectory). The three commands are:
 
 ```bash
-shipwright                         # list available sounds
-shipwright starter_blip            # render one sound
-shipwright all                     # render every sound
-shipwright all --flac --jobs 4     # parallel render with extra FLAC files
-shipwright starter_blip --play     # render and audition
-shipwright --watch starter_blip    # re-render on save
-shipwright -C path/to/project all  # render a project without cd-ing into it
+shipwright init NAME    # scaffold a new project (use '.' for the current dir)
+shipwright build        # render the project per [build] in shipwright.toml
+shipwright list         # list the sounds available in the project
 ```
 
-Useful render flags:
+`shipwright build` is the main command. With no arguments it renders the targets
+named in `[build]` (default: every sound) using each sound's configured formats.
+Name specific sounds to build just those, and point at a project elsewhere with
+`-C/--project`:
 
 ```bash
-shipwright ui_blip --out build/blip.wav --duration 0.4 --gain -3
-shipwright sea_bed --stems --lufs -18
-shipwright sea_bed --sr 48000 --ogg --flac --mp3
-shipwright all --seed 1234 --jobs 0
-shipwright --watch all
+shipwright build                       # build everything per the toml
+shipwright build starter_blip          # build one sound
+shipwright build a b c                 # build a subset
+shipwright build --watch               # re-render on every save
+shipwright build -C path/to/project    # build a project without cd-ing in
+```
+
+The `[build]` table is the source of truth; CLI flags are one-off overrides on
+top of it:
+
+```bash
+shipwright build starter_blip --out dist/blip.wav --duration 0.4 --gain -3
+shipwright build sea_bed --stems --lufs -18
+shipwright build sea_bed --sr 48000 --ogg --flac --mp3
+shipwright build --seed 1234 --jobs 0
+shipwright build starter_blip --play
 ```
 
 `--jobs 0` uses the available CPU count. MP3 support depends on the local
-libsndfile build used by `soundfile`.
+libsndfile build used by `soundfile`; a format that can't be written is skipped
+with a warning while the rest of the build continues (WAV always must succeed).
 
 ## Write Sounds
 
@@ -325,6 +336,27 @@ soundfont_dir = "soundfonts"
 output_dir = "output"
 ```
 
+The `[build]` table describes what `shipwright build` produces. The keys under
+`[build]` are the defaults for every sound; a `[build.<name>]` table overrides
+them for one sound, and CLI flags override both:
+
+```toml
+[build]
+targets = ["all"]          # which sounds to build ("all" = every sound)
+formats = ["wav"]          # output formats: wav, ogg, flac, mp3
+# lufs = -18               # normalize to integrated LUFS before export
+# gain = 0.0               # post-render gain in dB
+# stems = false            # write per-track WAV stems (RenderSpec sounds)
+# seed = 1234              # seed numpy and shipwright noise
+# jobs = 0                 # parallel jobs (0 = CPU count, 1 = serial)
+
+[build.sea_bed]            # per-sound overrides
+formats = ["wav", "flac"]
+duration = 30
+stems = true
+lufs = -14
+```
+
 Two environment variables override discovery as escape hatches:
 
 - `SHIPWRIGHT_ROOT` — use this directory as the project root instead of walking
@@ -349,8 +381,8 @@ source helpers above the engine.
 
 ```bash
 uv run --extra dev pytest
-env SHIPWRIGHT_SOUNDS=examples uv run shipwright ui_blip
-env SHIPWRIGHT_SOUNDS=examples uv run shipwright sea_bed
+env SHIPWRIGHT_SOUNDS=examples uv run shipwright build ui_blip
+env SHIPWRIGHT_SOUNDS=examples uv run shipwright build sea_bed
 ```
 
 ## License

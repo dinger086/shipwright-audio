@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Breaking
+
+- The CLI is now subcommand-based, like `uv`: `shipwright init NAME`,
+  `shipwright build [TARGETS...]`, and `shipwright list`. The bare positional
+  render form (`shipwright NAME` / `shipwright all`) and listing sounds with a
+  no-argument `shipwright` are gone — use `shipwright build NAME` and
+  `shipwright list`. Render flags (`--out`, `--duration`, `--seed`, `--watch`,
+  …) and `-C/--project` now live on `shipwright build`.
+
+### Added
+
+- A `[build]` table in `shipwright.toml` describes how a project builds:
+  `targets`, `formats`, `lufs`, `gain`, `stems`, `seed`, and `jobs`. Per-sound
+  `[build.<name>]` tables override the defaults, and CLI flags override both.
+  `shipwright build` with no targets renders `[build].targets` (default: every
+  sound). The typical flow is `shipwright init NAME` → `cd NAME` →
+  `shipwright build`.
+
+### Changed
+
+- Running `shipwright` with no command now prints the CLI help.
+- A non-WAV export format that can't be written (e.g. MP3 without libsndfile
+  support) is skipped with a warning instead of failing the build; WAV must
+  still succeed.
+
 ## 0.2.0 - 2026-06-28
 
 ### Breaking

@@ -53,9 +53,20 @@ def test_cli_lists_sounds(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     make_project(tmp_path, {"blip": BLIP})
 
-    cli.main([])
+    cli.main(["list"])
 
     assert capsys.readouterr().out.strip() == "sounds: blip"
+    assert not (tmp_path / "output").exists()
+
+
+def test_cli_without_project_shows_help(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    cli.main([])
+
+    out = capsys.readouterr().out
+    assert "usage: shipwright" in out
+    assert "init" in out and "build" in out
     assert not (tmp_path / "output").exists()
 
 
@@ -64,7 +75,7 @@ def test_cli_runs_from_subdirectory(tmp_path, monkeypatch, capsys):
     sub = tmp_path / "sounds"
     monkeypatch.chdir(sub)
 
-    cli.main([])
+    cli.main(["list"])
 
     assert capsys.readouterr().out.strip() == "sounds: blip"
 
@@ -75,7 +86,7 @@ def test_cli_project_flag_points_at_another_dir(tmp_path, monkeypatch, capsys):
     make_project(project, {"blip": BLIP})
     monkeypatch.chdir(tmp_path)
 
-    cli.main(["-C", str(project)])
+    cli.main(["list", "-C", str(project)])
 
     assert capsys.readouterr().out.strip() == "sounds: blip"
 
@@ -85,14 +96,14 @@ def test_cli_unknown_sound_has_friendly_error(tmp_path, monkeypatch):
     make_project(tmp_path, {"blip": BLIP})
 
     with pytest.raises(SystemExit, match="unknown sound 'missing'. Available sounds: blip"):
-        cli.main(["missing"])
+        cli.main(["build", "missing"])
 
 
 def test_cli_renders_buffer_sound(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     make_project(tmp_path, {"blip": BLIP})
 
-    cli.main(["blip"])
+    cli.main(["build", "blip"])
 
     assert (tmp_path / "output" / "blip.wav").is_file()
     assert "blip" in capsys.readouterr().out
@@ -114,7 +125,7 @@ def bad():
     )
 
     with pytest.raises(SystemExit, match="expected Buffer or RenderSpec"):
-        cli.main(["bad"])
+        cli.main(["build", "bad"])
 
 
 def test_cli_routes_render_spec_without_real_dawdreamer(tmp_path, monkeypatch):
@@ -139,7 +150,7 @@ def song():
 
     monkeypatch.setattr(shipwright.engine, "render_spec", fake_render_spec)
 
-    cli.main(["song"])
+    cli.main(["build", "song"])
 
     assert (tmp_path / "output" / "song.wav").is_file()
 
@@ -161,7 +172,7 @@ def blip():
     )
     out = tmp_path / "custom.wav"
 
-    cli.main(["blip", "--out", str(out), "--duration", "0.001", "--flac"])
+    cli.main(["build", "blip", "--out", str(out), "--duration", "0.001", "--flac"])
 
     audio, sr = sf.read(out)
     assert out.is_file()
@@ -182,10 +193,10 @@ def test_cli_seed_reaches_dsp_noise(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     make_project(tmp_path, {"noise": NOISE.format(name="noise")})
 
-    cli.main(["noise", "--seed", "7"])
+    cli.main(["build", "noise", "--seed", "7"])
     first, _ = sf.read(tmp_path / "output" / "noise.wav")
     clear()
-    cli.main(["noise", "--seed", "7"])
+    cli.main(["build", "noise", "--seed", "7"])
     second, _ = sf.read(tmp_path / "output" / "noise.wav")
 
     np.testing.assert_array_equal(first, second)
@@ -198,11 +209,11 @@ def test_cli_seed_is_deterministic_when_rendering_all_in_parallel(tmp_path, monk
         {name: NOISE.format(name=name) for name in ["a", "b"]},
     )
 
-    cli.main(["all", "--seed", "99", "--jobs", "2"])
+    cli.main(["build", "all", "--seed", "99", "--jobs", "2"])
     first_a, _ = sf.read(tmp_path / "output" / "a.wav")
     first_b, _ = sf.read(tmp_path / "output" / "b.wav")
     clear()
-    cli.main(["all", "--seed", "99", "--jobs", "2"])
+    cli.main(["build", "all", "--seed", "99", "--jobs", "2"])
     second_a, _ = sf.read(tmp_path / "output" / "a.wav")
     second_b, _ = sf.read(tmp_path / "output" / "b.wav")
 
@@ -252,6 +263,97 @@ def test_cli_init_project_renders_starter_sound(tmp_path, monkeypatch):
     root = tmp_path / "game_audio"
     monkeypatch.chdir(root)
 
-    cli.main(["starter_blip"])
+    cli.main(["build", "starter_blip"])
 
     assert (root / "output" / "starter_blip.wav").is_file()
+
+
+TONE = """
+from shipwright import sound, Buffer
+import numpy as np
+
+@sound("{name}")
+def make():
+    return Buffer(np.ones((100, 2), dtype=np.float32) * 0.1)
+"""
+
+
+def test_cli_build_without_targets_renders_all_sounds(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    make_project(tmp_path, {n: TONE.format(name=n) for n in ("a", "b")})
+
+    cli.main(["build"])
+
+    assert (tmp_path / "output" / "a.wav").is_file()
+    assert (tmp_path / "output" / "b.wav").is_file()
+
+
+def test_cli_build_targets_come_from_toml(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    make_project(
+        tmp_path,
+        {n: TONE.format(name=n) for n in ("a", "b")},
+        toml='[shipwright]\n\n[build]\ntargets = ["a"]\n',
+    )
+
+    cli.main(["build"])
+
+    assert (tmp_path / "output" / "a.wav").is_file()
+    assert not (tmp_path / "output" / "b.wav").exists()
+
+
+def test_cli_build_per_target_format_override(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    make_project(
+        tmp_path,
+        {"blip": TONE.format(name="blip")},
+        toml='[shipwright]\n\n[build]\nformats = ["wav"]\n\n[build.blip]\nformats = ["wav", "flac"]\n',
+    )
+
+    cli.main(["build"])
+
+    assert (tmp_path / "output" / "blip.wav").is_file()
+    assert (tmp_path / "output" / "blip.flac").is_file()
+
+
+def test_cli_build_toml_duration_applies_and_cli_overrides(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    make_project(
+        tmp_path,
+        {"blip": TONE.format(name="blip")},
+        toml="[shipwright]\n\n[build.blip]\nduration = 0.001\n",
+    )
+
+    cli.main(["build", "blip"])
+    audio, sr = sf.read(tmp_path / "output" / "blip.wav")
+    assert len(audio) == round(sr * 0.001)
+
+    cli.main(["build", "blip", "--duration", "0.002"])
+    audio, sr = sf.read(tmp_path / "output" / "blip.wav")
+    assert len(audio) == round(sr * 0.002)
+
+
+def test_cli_build_skips_failing_format_but_keeps_wav(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    make_project(
+        tmp_path,
+        {"blip": TONE.format(name="blip")},
+        toml='[shipwright]\n\n[build.blip]\nformats = ["wav", "mp3"]\n',
+    )
+
+    import shipwright.engine
+
+    real_write = shipwright.engine.write_audio
+
+    def flaky_write(path, audio, sr, *, format=None, **kw):
+        if format == "MP3":
+            raise RuntimeError("no mp3 support")
+        return real_write(path, audio, sr, format=format, **kw)
+
+    monkeypatch.setattr(shipwright.engine, "write_audio", flaky_write)
+
+    cli.main(["build", "blip"])
+
+    assert (tmp_path / "output" / "blip.wav").is_file()
+    assert not (tmp_path / "output" / "blip.mp3").exists()
+    assert "skipped mp3" in capsys.readouterr().out

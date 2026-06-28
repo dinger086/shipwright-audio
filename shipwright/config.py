@@ -34,44 +34,66 @@ def find_project_root(start=None):
     return start
 
 
-def _load_project_config(root):
+def _load_toml(root):
+    """Load the whole ``shipwright.toml`` as a nested dict (tables and all)."""
     path = root / PROJECT_MARKER
     if not path.is_file():
         return {}
     if tomllib is not None:
         with path.open("rb") as f:
-            data = tomllib.load(f)
-        return data.get("shipwright", data)
+            return tomllib.load(f)
     return _load_simple_toml(path)
 
 
+def _load_project_config(root):
+    """The ``[shipwright]`` render settings (falls back to the file root)."""
+    full = _load_toml(root)
+    return full.get("shipwright", full)
+
+
+def _parse_scalar(value):
+    if value.startswith(("\"", "'")) and value.endswith(("\"", "'")):
+        return value[1:-1]
+    if value.lower() in {"true", "false"}:
+        return value.lower() == "true"
+    try:
+        return int(value)
+    except ValueError:
+        return float(value)
+
+
+def _parse_value(value):
+    value = value.strip()
+    if value.startswith("[") and value.endswith("]"):
+        inner = value[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_scalar(item.strip()) for item in inner.split(",") if item.strip()]
+    return _parse_scalar(value)
+
+
 def _load_simple_toml(path):
-    """Small fallback for Python 3.10: top-level key = scalar pairs only."""
+    """Small fallback for Python 3.10: scalars and one-line arrays under the
+    ``[shipwright]``, ``[build]`` and ``[build.<name>]`` tables."""
     data = {}
-    active = data
+    section = []  # the keys identifying the current table; [] is the file root
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
-        if line == "[shipwright]":
-            active = data
+        if line.startswith("[") and line.endswith("]"):
+            section = [part.strip() for part in line[1:-1].split(".")]
+            target = data
+            for key in section:
+                target = target.setdefault(key, {})
             continue
-        if line.startswith("["):
-            active = {}
-            continue
-        if "=" not in line or active is not data:
+        if "=" not in line:
             continue
         key, value = [part.strip() for part in line.split("=", 1)]
-        if value.startswith(("\"", "'")) and value.endswith(("\"", "'")):
-            parsed = value[1:-1]
-        elif value.lower() in {"true", "false"}:
-            parsed = value.lower() == "true"
-        else:
-            try:
-                parsed = int(value)
-            except ValueError:
-                parsed = float(value)
-        data[key] = parsed
+        target = data
+        for part in section:
+            target = target.setdefault(part, {})
+        target[key] = _parse_value(value)
     return data
 
 
@@ -89,14 +111,16 @@ def configure(start=None, sr=None):
     Pass ``start`` to begin discovery somewhere other than the cwd (the CLI's
     ``-C/--project``). ``sr`` overrides the sample rate for this run.
     """
-    global ROOT, PROJECT, SR, BLOCK, MASTER_CEILING, TARGET_LUFS
+    global ROOT, PROJECT, BUILD, SR, BLOCK, MASTER_CEILING, TARGET_LUFS
     global EXPORT_SUBTYPE, DITHER, SOUNDS_DIR, SOUNDFONT_DIR, OUTPUT_DIR
 
     if "SHIPWRIGHT_ROOT" in os.environ:
         ROOT = Path(os.environ["SHIPWRIGHT_ROOT"]).expanduser().resolve()
     else:
         ROOT = find_project_root(start)
-    PROJECT = _load_project_config(ROOT)
+    full = _load_toml(ROOT)
+    PROJECT = full.get("shipwright", full)
+    BUILD = full.get("build") if isinstance(full.get("build"), dict) else {}
 
     SR = int(sr if sr is not None else PROJECT.get("sr", 44100))
     BLOCK = int(PROJECT.get("block", 512))
