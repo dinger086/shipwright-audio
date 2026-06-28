@@ -1,16 +1,32 @@
 """The DawDreamer spine: build processor graphs from RenderSpec objects,
 render offline, and prepare audio for export."""
 from pathlib import Path
+import threading
+from math import gcd
 
 import numpy as np
 import dawdreamer as daw
+from scipy.signal import resample_poly
 
 from . import config
-from .registry import Buffer, RenderSpec, ReturnBus
+from .registry import AudioTrack, Buffer, RenderSpec, ReturnBus
+
+_LOCAL = threading.local()
 
 
 def _db(db):
     return 10 ** (db / 20.0)
+
+
+def set_thread_seed(seed):
+    """Seed export-time randomness, currently used for dither."""
+    _LOCAL.rng = np.random.default_rng(seed)
+
+
+def _rng():
+    if not hasattr(_LOCAL, "rng"):
+        _LOCAL.rng = np.random.default_rng()
+    return _LOCAL.rng
 
 
 def _as_stereo(audio):
@@ -33,7 +49,8 @@ def _tpdf_dither(audio, subtype):
     if subtype is None or "16" not in subtype.upper():
         return audio
     step = 1.0 / 32768.0
-    noise = (np.random.random(audio.shape) - np.random.random(audio.shape)) * step
+    rng = _rng()
+    noise = (rng.random(audio.shape) - rng.random(audio.shape)) * step
     return np.asarray(audio + noise, dtype=np.float32)
 
 
@@ -110,21 +127,87 @@ def _notes_seconds(spec, track):
     return [(*_note_seconds(spec, n), n.pitch, n.vel) for n in track.notes]
 
 
+def _time_seconds(spec, value):
+    if spec.time_unit == "seconds":
+        return value
+    if spec.time_unit == "beats":
+        return value * 60.0 / spec.tempo
+    raise ValueError("RenderSpec.time_unit must be 'seconds' or 'beats'")
+
+
 def _duration(spec):
     if spec.duration is not None:
         return spec.duration
     end = 0.0
     for tr in spec.tracks:
-        for n in tr.notes:
-            start, dur = _note_seconds(spec, n)
-            end = max(end, start + dur)
+        if isinstance(tr, AudioTrack):
+            for clip in tr.clips:
+                start = _time_seconds(spec, clip.start)
+                if clip.dur is not None:
+                    clip_dur = _time_seconds(spec, clip.dur)
+                else:
+                    clip_dur = _audio_clip_duration(clip)
+                end = max(end, start + clip_dur)
+        else:
+            for n in tr.notes:
+                start, dur = _note_seconds(spec, n)
+                end = max(end, start + dur)
     return end + 2.0
 
 
 def _resolve_path(path):
     if path is None:
         raise ValueError("instrument path is required")
-    return str(Path(path).expanduser())
+    p = Path(path).expanduser()
+    return str(p if p.is_absolute() else config.ROOT / p)
+
+
+def _audio_clip_duration(clip):
+    import soundfile as sf
+
+    info = sf.info(_resolve_path(clip.path))
+    available = max(0.0, info.duration - clip.offset)
+    return available if clip.dur is None else min(available, clip.dur)
+
+
+def _resample_audio(audio, source_sr, target_sr):
+    if source_sr == target_sr:
+        return audio
+    factor = gcd(source_sr, target_sr)
+    return resample_poly(audio, target_sr // factor, source_sr // factor, axis=0).astype(np.float32)
+
+
+def _read_clip_audio(clip, target_sr, dur_seconds=None):
+    import soundfile as sf
+
+    start = max(0, int(round(clip.offset * target_sr)))
+    source_path = _resolve_path(clip.path)
+    data, source_sr = sf.read(source_path, dtype="float32", always_2d=True)
+    data = _resample_audio(data, source_sr, target_sr)
+    if data.shape[1] == 1:
+        data = np.repeat(data, 2, axis=1)
+    elif data.shape[1] > 2:
+        data = data[:, :2]
+    data = data[start:]
+    if dur_seconds is not None:
+        data = data[:max(0, int(round(dur_seconds * target_sr)))]
+    if clip.gain_db:
+        data = data * _db(clip.gain_db)
+    return data.astype(np.float32)
+
+
+def _render_audio_clips(spec, track, dur):
+    frames = max(1, int(np.ceil(dur * config.SR)))
+    out = np.zeros((frames, 2), dtype=np.float32)
+    for clip in track.clips:
+        clip_dur = None if clip.dur is None else _time_seconds(spec, clip.dur)
+        clip_audio = _read_clip_audio(clip, config.SR, dur_seconds=clip_dur)
+        start = max(0, int(round(_time_seconds(spec, clip.start) * config.SR)))
+        if start >= frames or not len(clip_audio):
+            continue
+        n = min(len(clip_audio), frames - start)
+        out[start:start + n] += clip_audio[:n]
+    return out
 
 
 def _render_soundfont(instrument, notes, dur, sample_rate):
@@ -196,9 +279,12 @@ def _add_gain(engine, nodes, name, source, gain_db):
 
 
 def _build_track(engine, nodes, spec, track, i, dur):
-    notes = _notes_seconds(spec, track)
-    inst_name = f"inst{i}"
-    source = _make_source(engine, inst_name, track, notes, dur)
+    inst_name = f"inst{i}" if not isinstance(track, AudioTrack) else f"audio{i}"
+    if isinstance(track, AudioTrack):
+        source = engine.make_playback_processor(inst_name, _render_audio_clips(spec, track, dur).T)
+    else:
+        notes = _notes_seconds(spec, track)
+        source = _make_source(engine, inst_name, track, notes, dur)
     nodes.append((source, []))
     last = inst_name
 

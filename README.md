@@ -19,7 +19,7 @@ Four layers, cleanly separated:
 You author in a `sounds/` directory in your project (create it yourself —
 the tool reads `./sounds` from wherever you run it). Each file is one sound.
 A build-function returns either a **`Buffer`** (raw numpy samples → SFX) or a
-**`RenderSpec`** (tracks of MIDI played by instruments → music). The harness
+**`RenderSpec`** (MIDI tracks, audio tracks, and the mix graph). The harness
 routes by type. Copy-paste starting points live in [`examples/`](examples/).
 
 ## Install
@@ -43,6 +43,7 @@ to the directory you run it in (override with `SHIPWRIGHT_SOUNDS` /
 `SHIPWRIGHT_OUTPUT`).
 
 ```bash
+shipwright init my_audio_project    # scaffold a new project
 shipwright                       # list sounds
 shipwright sea_bed               # render one  -> output/sea_bed.wav
 shipwright all --ogg             # render all, also write .ogg
@@ -53,6 +54,33 @@ shipwright all --flac --jobs 4   # render all in parallel, also write FLAC
 
 From a checkout without installing, `uv run shipwright ...` or
 `python render.py ...` both work.
+
+## Start a project
+
+```bash
+shipwright init my_game_audio
+cd my_game_audio
+shipwright starter_blip
+```
+
+`init` creates a compact starter project with one runnable example sound:
+
+```text
+my_game_audio/
+  shipwright.toml
+  sounds/
+    starter_blip.py
+  instruments/
+    __init__.py
+    basic.py
+  soundfonts/
+    README.md
+  output/
+    .gitkeep
+```
+
+Use `shipwright init .` to initialize the current directory. Existing generated
+files are left alone unless you pass `--force`.
 
 ## Develop
 
@@ -77,7 +105,42 @@ def zap():
 ```
 
 …then `shipwright zap`. Music works the same way but returns a
-`RenderSpec` of `Track`s — see [`examples/music_sea_bed.py`](examples/music_sea_bed.py).
+`RenderSpec` of `Track`s or `AudioTrack`s — see
+[`examples/music_sea_bed.py`](examples/music_sea_bed.py).
+
+## Use Your Own Audio
+
+For sample-based sounds, put WAV/AIFF/FLAC files in your project and use
+`AudioClip` inside an `AudioTrack`. Audio tracks support the same mixer controls
+as MIDI tracks: `gain_db`, `pan`, Faust `fx`, sends/returns, sidechain, and
+stems.
+
+```python
+from shipwright import AudioClip, AudioTrack, RenderSpec, ReturnBus, Send, sound
+from shipwright import instruments
+
+
+@sound("hit_with_space")
+def hit_with_space():
+    hit = AudioTrack(
+        clips=[
+            AudioClip("assets/hit.wav", start=0.0),
+            AudioClip("assets/hit.wav", start=0.35, gain_db=-8),
+        ],
+        gain_db=-3,
+        pan=-0.2,
+        sends=[Send("verb", -12)],
+        name="hit",
+    )
+    return RenderSpec(
+        tracks=[hit],
+        returns=[ReturnBus("verb", fx=[instruments.reverb(0.35)])],
+    )
+```
+
+`AudioClip.start` and `AudioClip.dur` use the spec's `time_unit`; file
+`offset` is always in seconds. Relative paths are resolved from the project
+root.
 
 Useful render flags:
 

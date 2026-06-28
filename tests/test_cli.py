@@ -221,3 +221,52 @@ def build():
 
     np.testing.assert_array_equal(first_a, second_a)
     np.testing.assert_array_equal(first_b, second_b)
+
+
+def test_cli_init_creates_minimal_project(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    cli.main(["init", "game_audio"])
+
+    root = tmp_path / "game_audio"
+    assert (root / "shipwright.toml").is_file()
+    assert (root / "sounds" / "starter_blip.py").is_file()
+    assert len(list((root / "sounds").glob("*.py"))) == 1
+    assert (root / "instruments" / "__init__.py").is_file()
+    assert (root / "instruments" / "basic.py").is_file()
+    assert (root / "soundfonts" / "README.md").is_file()
+    assert (root / "output" / ".gitkeep").is_file()
+    assert "created shipwright project" in capsys.readouterr().out
+
+
+def test_cli_init_current_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    cli.main(["init", "."])
+
+    assert (tmp_path / "shipwright.toml").is_file()
+    assert (tmp_path / "sounds" / "starter_blip.py").is_file()
+
+
+def test_cli_init_refuses_to_overwrite_without_force(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    cli.main(["init", "game_audio"])
+
+    with pytest.raises(SystemExit, match="refusing to overwrite"):
+        cli.main(["init", "game_audio"])
+
+    cli.main(["init", "game_audio", "--force"])
+
+
+def test_cli_init_project_renders_starter_sound(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    cli.main(["init", "game_audio"])
+    root = tmp_path / "game_audio"
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(config, "ROOT", root)
+    monkeypatch.setattr(config, "SOUNDS_DIR", root / "sounds")
+    monkeypatch.setattr(config, "OUTPUT_DIR", root / "output")
+
+    cli.main(["starter_blip"])
+
+    assert (root / "output" / "starter_blip.wav").is_file()

@@ -104,8 +104,26 @@ class Track:
     name: Optional[str] = None
 
 @dataclass
+class AudioClip:
+    path: Path | str
+    start: float = 0.0       # seconds, or beats when RenderSpec.time_unit="beats"
+    dur: Optional[float] = None
+    offset: float = 0.0      # seconds into the source file
+    gain_db: float = 0.0
+
+@dataclass
+class AudioTrack:
+    clips: List[AudioClip]
+    gain_db: float = 0.0
+    fx: List[str] = field(default_factory=list)
+    pan: float = 0.0
+    sends: List[Send] = field(default_factory=list)
+    sidechain: Optional[Sidechain] = None
+    name: Optional[str] = None
+
+@dataclass
 class RenderSpec:
-    tracks: List[Track]
+    tracks: List[Track | AudioTrack]
     tempo: float = 120.0
     duration: Optional[float] = None              # seconds; auto from notes if None
     master_fx: List[str] = field(default_factory=list)  # bus effects (reverb...)

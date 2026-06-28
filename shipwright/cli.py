@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import time
 
 import numpy as np
@@ -16,12 +17,64 @@ from . import __version__, config
 from .registry import Buffer, RenderSpec, clear, get, names
 
 
+_INIT_FILES = {
+    "shipwright.toml": """[shipwright]
+sr = 44100
+block = 512
+master_ceiling = 0.97
+target_lufs = -18
+export_subtype = "PCM_16"
+dither = true
+sounds_dir = "sounds"
+soundfont_dir = "soundfonts"
+output_dir = "output"
+""",
+    "sounds/starter_blip.py": '''from shipwright import Buffer, sound
+from instruments.basic import ui_ping
+
+
+@sound("starter_blip")
+def starter_blip():
+    return Buffer(ui_ping())
+''',
+    "instruments/__init__.py": """from .basic import bright_pluck, soft_keys, ui_ping
+""",
+    "instruments/basic.py": '''import numpy as np
+
+from shipwright import dsp, instruments
+
+
+def ui_ping():
+    tone = dsp.sine(880, 0.16, amp=0.45)
+    click = dsp.noise(0.03, amp=0.04)
+    sig = dsp.layer(tone, click)
+    sig = dsp.ad_env(sig, attack=0.002, release=0.08)
+    sig = dsp.lowpass(sig, 2400)
+    return dsp.to_stereo(dsp.normalize(sig, 0.7), pan=0.0).astype(np.float32)
+
+
+def bright_pluck():
+    return instruments.pluck(voices=8)
+
+
+def soft_keys():
+    return instruments.soft_pad(cutoff=1800, voices=8)
+''',
+    "soundfonts/README.md": """Drop .sf2 files here and load them with shipwright.instruments.soundfont().
+""",
+    "output/.gitkeep": "",
+}
+
+
 def load_sounds():
     if not config.SOUNDS_DIR.is_dir():
         raise SystemExit(
             f"no sounds directory at {config.SOUNDS_DIR}\n"
             "cd into a project with a sounds/ folder, or set SHIPWRIGHT_SOUNDS."
         )
+    root = str(config.ROOT)
+    if root not in sys.path:
+        sys.path.insert(0, root)
     clear()
     for f in sorted(config.SOUNDS_DIR.glob("*.py")):
         spec = importlib.util.spec_from_file_location(f.stem, f)
@@ -59,6 +112,29 @@ def _configure_runtime(args):
 def _seed_for_name(seed, name):
     digest = hashlib.blake2b(f"{seed}:{name}".encode("utf-8"), digest_size=4).digest()
     return int.from_bytes(digest, "big")
+
+
+def init_project(name, force=False):
+    if not name:
+        raise SystemExit("init needs a project name, e.g. shipwright init my_audio")
+
+    root = Path.cwd() if name == "." else Path(name).expanduser()
+    existing = [root / rel for rel in _INIT_FILES if (root / rel).exists()]
+    if existing and not force:
+        listed = ", ".join(str(_display_path(path)) for path in existing[:3])
+        if len(existing) > 3:
+            listed += f", +{len(existing) - 3} more"
+        raise SystemExit(f"refusing to overwrite existing project files: {listed}\nuse --force to overwrite")
+
+    root.mkdir(parents=True, exist_ok=True)
+    for rel, body in _INIT_FILES.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+
+    print(f"created shipwright project at {_display_path(root)}")
+    print("  next: cd", _display_path(root))
+    print("        shipwright starter_blip")
 
 
 def _format_specs(args):
@@ -181,8 +257,10 @@ def render_one(name, args, multiple=False):
         local_seed = _seed_for_name(args.seed, name)
         np.random.seed(local_seed)
         import shipwright.dsp as dsp
+        import shipwright.engine as engine
 
         dsp.set_thread_seed(local_seed)
+        engine.set_thread_seed(local_seed)
     obj, audio, sample_rate = _render_audio(name, duration=args.duration, sample_rate_override=args.sr)
     base = _base_output(name, args.out, multiple)
     written = _write_formats(
@@ -241,6 +319,7 @@ def build_parser():
         description="Render sounds defined in ./sounds to ./output.",
     )
     p.add_argument("target", nargs="?", help="sound name to render, or 'all'. Omit to list sounds.")
+    p.add_argument("project", nargs="?", help="project name for 'shipwright init NAME'")
     p.add_argument("--out", help="output file for one target, or output directory for all")
     p.add_argument("--sr", type=int, help="override sample rate for this run")
     p.add_argument("--duration", type=float, help="override rendered duration in seconds")
@@ -255,12 +334,20 @@ def build_parser():
     p.add_argument("--play", action="store_true", help="audition the rendered WAV after writing it")
     p.add_argument("--jobs", type=int, default=0, help="parallel jobs for rendering all; 1 disables parallelism")
     p.add_argument("--watch", action="store_true", help="re-render TARGET or all on every save (Ctrl-C to stop)")
+    p.add_argument("--force", action="store_true", help="overwrite existing files when using 'init'")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return p
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+
+    if args.target == "init":
+        init_project(args.project, force=args.force)
+        return
+    if args.project:
+        raise SystemExit(f"unexpected extra argument: {args.project}")
+
     _configure_runtime(args)
 
     if args.watch:

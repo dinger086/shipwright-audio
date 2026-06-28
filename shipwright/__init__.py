@@ -9,6 +9,8 @@ from .registry import (
     ReturnBus,
     Sidechain,
     Track,
+    AudioClip,
+    AudioTrack,
     RenderSpec,
     names,
     get,

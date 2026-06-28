@@ -2,11 +2,23 @@ import sys
 import types
 
 import numpy as np
+import soundfile as sf
 
 from shipwright import config, instruments
 import shipwright.engine as engine
 from shipwright.engine import measure_lufs, prepare_export, render_buffer, render_spec
-from shipwright.registry import Buffer, Instrument, Note, RenderSpec, ReturnBus, Send, Sidechain, Track
+from shipwright.registry import (
+    AudioClip,
+    AudioTrack,
+    Buffer,
+    Instrument,
+    Note,
+    RenderSpec,
+    ReturnBus,
+    Send,
+    Sidechain,
+    Track,
+)
 
 
 class FakeProcessor:
@@ -201,6 +213,47 @@ def test_sends_returns_and_pan_are_in_mix_graph(monkeypatch):
     assert fake.panners == [("pan0", "linear", -0.5)]
     assert "return_verb" in add_names
     assert "master" in add_names
+
+
+def test_audio_track_loads_clip_into_playback_processor(tmp_path, monkeypatch):
+    FakeEngine.instances = []
+    sample = np.ones((1000, 2), dtype=np.float32) * 0.25
+    asset = tmp_path / "assets" / "hit.wav"
+    asset.parent.mkdir()
+    sf.write(asset, sample, config.SR)
+    monkeypatch.setattr(config, "ROOT", tmp_path)
+    monkeypatch.setattr(engine.daw, "RenderEngine", FakeEngine)
+    track = AudioTrack(
+        [AudioClip("assets/hit.wav", start=0.25, dur=0.5, gain_db=-3)],
+        fx=[instruments.reverb(0.1)],
+        pan=0.75,
+        name="hit",
+    )
+    spec = RenderSpec([track], duration=1.0)
+
+    rendered = render_spec(spec)
+    fake = FakeEngine.instances[-1]
+
+    assert rendered.shape == (config.SR, 2)
+    assert fake.playback == [("audio0", (2, config.SR))]
+    assert fake.panners == [("pan0", "linear", 0.75)]
+
+
+def test_audio_track_auto_duration_and_beat_timing(tmp_path, monkeypatch):
+    FakeEngine.instances = []
+    sample = np.ones((config.SR, 1), dtype=np.float32) * 0.2
+    asset = tmp_path / "loop.wav"
+    sf.write(asset, sample, config.SR)
+    monkeypatch.setattr(config, "ROOT", tmp_path)
+    monkeypatch.setattr(engine.daw, "RenderEngine", FakeEngine)
+    track = AudioTrack([AudioClip("loop.wav", start=2, dur=1)])
+    spec = RenderSpec([track], tempo=120, time_unit="beats")
+
+    render_spec(spec)
+    fake = FakeEngine.instances[-1]
+
+    assert fake.frames == int(config.SR * 3.5)
+    assert fake.playback == [("audio0", (2, int(config.SR * 3.5)))]
 
 
 def test_render_stems_applies_sidechain_ducking(monkeypatch):
