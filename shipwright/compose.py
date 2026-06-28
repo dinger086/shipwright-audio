@@ -140,6 +140,39 @@ def quantize_pitch(pitch, root="C", quality="major"):
 def quantize_notes(notes, root="C", quality="major"):
     return [Note(quantize_pitch(n.pitch, root, quality), n.start, n.dur, n.vel) for n in notes]
 
+# --- microtonal tuning -----------------------------------------------------
+# A "tuning" is a list of cents-above-the-root, one per scale degree within an
+# octave (Scala-style). edo() and just() build common ones; tuned_scale() turns
+# a tuning into fractional MIDI pitches and quantize_tuning() snaps to it.
+def cents(pitch, offset):
+    """Offset a MIDI pitch by `offset` cents (100 cents = one semitone)."""
+    return pitch + offset / 100.0
+
+def edo(divisions):
+    """Tuning for `divisions` equal divisions of the octave, as cents.
+    edo(12) is standard; edo(24) quarter-tones; edo(19), edo(31), ..."""
+    return [i * 1200.0 / divisions for i in range(divisions)]
+
+def just(ratios):
+    """Tuning from frequency ratios (e.g. just intonation), as cents.
+    just([1, 9/8, 5/4, 4/3, 3/2, 5/3, 15/8])."""
+    from math import log2
+    return [1200.0 * log2(r) for r in ratios]
+
+def tuned_scale(tuning, root=60, octaves=1):
+    """Every degree of `tuning` as a fractional MIDI pitch, starting at `root`."""
+    return [root + 12 * o + c / 100.0 for o in range(octaves) for c in tuning]
+
+def quantize_tuning(pitch, tuning, root=60):
+    """Snap a (possibly fractional) MIDI pitch to the nearest tuning degree, in
+    whichever octave relative to `root` is closest."""
+    base = round((pitch - root) / 12)
+    cands = [root + 12 * o + c / 100.0 for o in (base - 1, base, base + 1) for c in tuning]
+    return min(cands, key=lambda cand: (abs(cand - pitch), cand))
+
+def quantize_tuning_notes(notes, tuning, root=60):
+    return [Note(quantize_tuning(n.pitch, tuning, root), n.start, n.dur, n.vel) for n in notes]
+
 def beats_to_seconds(notes, bpm):
     spb = 60.0 / bpm
     return [Note(n.pitch, n.start * spb, n.dur * spb, n.vel) for n in notes]

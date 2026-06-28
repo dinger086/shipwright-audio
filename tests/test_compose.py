@@ -1,4 +1,25 @@
 from shipwright import compose
+from shipwright.registry import Note
+
+
+def test_microtonal_tuning_helpers():
+    assert compose.cents(69, 50) == 69.5                      # quarter-tone up
+    assert compose.edo(12) == [i * 100.0 for i in range(12)]
+    assert compose.edo(24)[1] == 50.0                         # quarter-tone step
+
+    fifth = compose.just([1, 3 / 2])[1]                       # just perfect fifth
+    assert abs(fifth - 701.955) < 0.01
+
+    sc = compose.tuned_scale(compose.edo(24), root=60, octaves=1)
+    assert len(sc) == 24
+    assert sc[0] == 60.0
+    assert sc[1] == 60.5
+
+    assert compose.quantize_tuning(60.6, compose.edo(24), root=60) == 60.5
+
+    notes = [Note(60.6, 0.0, 1.0), Note(61.4, 1.0, 1.0)]
+    snapped = compose.quantize_tuning_notes(notes, compose.edo(24), root=60)
+    assert [n.pitch for n in snapped] == [60.5, 61.5]
 
 
 def test_note_to_midi_and_chord_parsing():

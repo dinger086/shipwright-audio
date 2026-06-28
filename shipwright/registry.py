@@ -33,6 +33,14 @@ def instrument(name):
         return Instrument(name=name, kind="python", render=fn)
     return deco
 
+
+def effect(fn):
+    """Decorator: turn an ``(audio, sr) -> audio`` numpy function into an Effect
+    you can drop into a Track's ``fx`` or a RenderSpec's ``master_fx`` alongside
+    Faust strings. It runs offline on the rendered (stereo) audio, so it can do
+    frequency-space / FFT processing the streaming Faust graph can't."""
+    return Effect(name=getattr(fn, "__name__", "effect"), apply=fn)
+
 # ---- SFX path -------------------------------------------------------------
 @dataclass
 class Buffer:
@@ -42,7 +50,7 @@ class Buffer:
 # ---- Music path -----------------------------------------------------------
 @dataclass
 class Note:
-    pitch: int               # MIDI note number (60 = middle C)
+    pitch: float             # MIDI note number (60 = middle C); fractional = microtonal
     start: float             # seconds, or beats when RenderSpec.time_unit="beats"
     dur: float               # seconds, or beats when RenderSpec.time_unit="beats"
     vel: int = 100           # 1..127
@@ -83,6 +91,12 @@ class Instrument:
             bank=bank,
             preset=preset,
         )
+
+@dataclass
+class Effect:
+    """A numpy/offline effect: apply(audio, sr) -> audio. Built by @effect."""
+    name: str
+    apply: Callable
 
 @dataclass
 class Send:

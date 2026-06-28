@@ -9,7 +9,7 @@ import dawdreamer as daw
 from scipy.signal import resample_poly
 
 from . import config
-from .registry import AudioTrack, Buffer, RenderSpec, ReturnBus
+from .registry import AudioTrack, Buffer, Effect, RenderSpec, ReturnBus
 
 _LOCAL = threading.local()
 
@@ -312,6 +312,8 @@ def _build_track(engine, nodes, spec, track, i, dur):
     last = inst_name
 
     for j, fx in enumerate(track.fx):
+        if not isinstance(fx, str):   # numpy Effects are applied offline
+            continue
         p = engine.make_faust_processor(f"fx{i}_{j}")
         p.set_dsp_string(fx)
         nodes.append((p, [last]))
@@ -352,6 +354,8 @@ def _load_mix_graph(engine, spec, track_outs, dur):
         nodes.append((add, inputs))
         last = f"return_{bus_name}"
         for j, fx in enumerate(bus.fx):
+            if not isinstance(fx, str):
+                continue
             p = engine.make_faust_processor(f"return_{bus_name}_fx{j}")
             p.set_dsp_string(fx)
             nodes.append((p, [last]))
@@ -370,6 +374,8 @@ def _load_mix_graph(engine, spec, track_outs, dur):
     last = "master"
 
     for k, mfx in enumerate(spec.master_fx):
+        if not isinstance(mfx, str):   # numpy Effects applied offline after mix
+            continue
         p = engine.make_faust_processor(f"m{k}")
         p.set_dsp_string(mfx)
         nodes.append((p, [last]))
@@ -456,9 +462,47 @@ def _render_mix_from_audio(spec, stems, dur):
     return engine.get_audio().T
 
 
+def _numpy_fx(fx_list):
+    return [fx for fx in fx_list if isinstance(fx, Effect)]
+
+
+def _apply_numpy_fx(audio, effects, sample_rate):
+    for fx in effects:
+        audio = _as_stereo(fx.apply(audio, sample_rate))
+    return audio
+
+
+def _needs_offline(spec):
+    """Numpy Effects and sidechain ducking both require per-track numpy audio."""
+    if any(tr.sidechain for tr in spec.tracks):
+        return True
+    if _numpy_fx(spec.master_fx):
+        return True
+    return any(_numpy_fx(tr.fx) for tr in spec.tracks)
+
+
+def _check_supported_fx(spec):
+    for bus in spec.returns:
+        if _numpy_fx(bus.fx):
+            raise ValueError(
+                f"numpy @effect is not supported on return bus {bus.name!r}; use a "
+                "Faust string there, or apply the effect on a track or in master_fx."
+            )
+
+
+def _rendered_stems(spec, dur):
+    """Per-track audio: the Faust chain rendered offline, then numpy fx applied."""
+    stems = []
+    for tr in spec.tracks:
+        audio = _render_single_track(spec, tr, dur)
+        stems.append(_apply_numpy_fx(audio, _numpy_fx(tr.fx), config.SR))
+    return stems
+
+
 def render_stems(spec: RenderSpec, apply_sidechain=True):
+    _check_supported_fx(spec)
     dur = _duration(spec)
-    stems = [_render_single_track(spec, tr, dur) for tr in spec.tracks]
+    stems = _rendered_stems(spec, dur)
     if apply_sidechain:
         stems = _apply_sidechains(spec, stems)
     return {
@@ -468,9 +512,12 @@ def render_stems(spec: RenderSpec, apply_sidechain=True):
 
 
 def render_spec(spec: RenderSpec):
-    if any(tr.sidechain for tr in spec.tracks):
+    _check_supported_fx(spec)
+    if _needs_offline(spec):
         dur = _duration(spec)
-        stems = [_render_single_track(spec, tr, dur) for tr in spec.tracks]
+        stems = _rendered_stems(spec, dur)
         stems = _apply_sidechains(spec, stems)
-        return _limit(_render_mix_from_audio(spec, stems, dur))
+        mix = _render_mix_from_audio(spec, stems, dur)
+        mix = _apply_numpy_fx(mix, _numpy_fx(spec.master_fx), config.SR)
+        return _limit(mix)
     return _limit(_render_graph(spec))

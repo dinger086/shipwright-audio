@@ -5,6 +5,16 @@
 - Added the `@instrument` decorator for custom numpy instruments: write a
   per-note `(freq, dur, vel) -> samples` function with the `dsp` module and drop
   it on a `Track`, no Faust required. Voices are summed for polyphony.
+- Added the `@effect` decorator for numpy/FFT effects: an `(audio, sr) -> audio`
+  function usable in a track's `fx` or `master_fx`, applied offline so it can do
+  frequency-space processing the streaming Faust graph can't (not supported on
+  return buses). Added frequency-domain `dsp` helpers `spectral_gate`,
+  `spectral_filter`, and `convolve_reverb`.
+- Microtonal support: `Note.pitch` is now a float (fractional MIDI), so numpy
+  `@instrument`s render any frequency. Added `compose` tuning helpers `cents`,
+  `edo`, `just`, `tuned_scale`, `quantize_tuning`, and `quantize_tuning_notes`
+  for n-EDO and just-intonation scales. (Faust/SoundFont/VST instruments still
+  use integer MIDI note-on.)
 
 - Project discovery: `shipwright` now walks up from the current directory to the
   nearest `shipwright.toml`, so it can run from a subdirectory. Added `-C/--project`

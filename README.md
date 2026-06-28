@@ -167,6 +167,7 @@ See [`examples/music_sea_bed.py`](examples/music_sea_bed.py) and
 - Scales and keys, including quantize-to-scale.
 - Swing and humanization.
 - Time signatures and beat/second conversion.
+- Microtonal tuning (any n-EDO or just-intonation ratio set).
 - Optional MIDI import/export through the `midi` extra.
 
 ```python
@@ -179,6 +180,27 @@ notes = compose.apply_groove(notes, swing=0.25, time_signature=meter, timing="be
 ```python
 notes = compose.read_midi("riff.mid")
 compose.write_midi("out.mid", notes, bpm=120)
+```
+
+### Microtonal
+
+`Note.pitch` is a float (fractional MIDI = microtonal), and the numpy
+`@instrument` path renders any frequency, so microtonality works end to end
+without MIDI's integer limit. (Faust / SoundFont / VST instruments still go
+through integer MIDI note-on, so use a numpy instrument for microtonal timbres.)
+
+A *tuning* is a list of cents-above-the-root; `edo()` and `just()` build common
+ones, `tuned_scale()` turns one into pitches, and `quantize_tuning()` snaps to it.
+
+```python
+notes = compose.melody([60, 60.5, 61, 61.5], bpm=96, timing="beats")  # quarter-tones
+
+quarter = compose.edo(24)                       # 24 equal divisions of the octave
+pitches = compose.tuned_scale(quarter, root=60, octaves=2)
+snapped = compose.quantize_tuning_notes(notes, quarter, root=60)
+
+ji = compose.just([1, 9/8, 5/4, 4/3, 3/2, 5/3, 15/8])   # just-intonation major
+notes = compose.quantize_tuning_notes(notes, ji, root=60)
 ```
 
 ## Instruments
@@ -253,6 +275,38 @@ return RenderSpec(
 
 Exports are peak-limited, can normalize to a LUFS target with `--lufs`, and
 dither 16-bit output by default.
+
+## Effects
+
+Track `fx`, return-bus `fx`, and `master_fx` take Faust strings (streaming,
+time-domain) — `instruments.reverb()` is one. For frequency-space / FFT work the
+streaming graph can't do, write a numpy effect with `@effect`: an
+`(audio, sr) -> audio` function that runs offline on the rendered stereo audio.
+Drop it into a track's `fx` or `master_fx` next to Faust strings.
+
+```python
+import numpy as np
+from shipwright import Track, effect
+
+
+@effect
+def lowpass_blur(audio, sr):
+    spec = np.fft.rfft(audio, axis=0)
+    freqs = np.fft.rfftfreq(len(audio), 1 / sr)
+    spec[freqs > 2000] *= 0.2
+    return np.fft.irfft(spec, n=len(audio), axis=0)
+
+
+pad = Track(organ, notes, fx=[lowpass_blur])
+```
+
+The `dsp` module ships ready-made frequency-space effects you can call from a
+numpy `@effect` or directly in a `Buffer` SFX: `dsp.spectral_gate`,
+`dsp.spectral_filter`, and `dsp.convolve_reverb`.
+
+Because a numpy effect needs the whole signal, it runs *after* a track's Faust
+chain (not interleaved per-sample), and it isn't supported on return buses — use
+Faust there, or apply the effect on a track or in `master_fx`.
 
 ## Project Config
 

@@ -2,9 +2,10 @@ import sys
 import types
 
 import numpy as np
+import pytest
 import soundfile as sf
 
-from shipwright import config, instrument, instruments
+from shipwright import config, effect, instrument, instruments
 import shipwright.engine as engine
 from shipwright.engine import (
     measure_lufs,
@@ -293,6 +294,56 @@ def test_audio_track_auto_duration_and_beat_timing(tmp_path, monkeypatch):
 
     assert fake.frames == int(config.SR * 3.5)
     assert fake.playback == [("audio0", (2, int(config.SR * 3.5)))]
+
+
+def test_numpy_effect_on_track_is_applied_offline(monkeypatch):
+    @effect
+    def double(audio, sr):
+        return audio * 2
+
+    stem = np.ones((441, 2), dtype=np.float32) * 0.1
+    monkeypatch.setattr(engine, "_render_single_track", lambda s, t, d: stem.copy())
+    captured = {}
+
+    def fake_mix(s, stems, d):
+        captured["stems"] = stems
+        return stems[0]
+
+    monkeypatch.setattr(engine, "_render_mix_from_audio", fake_mix)
+
+    track = Track(instruments.pluck(), [], fx=[double], name="p")
+    render_spec(RenderSpec([track], duration=0.01))
+
+    assert np.allclose(captured["stems"][0], 0.2)
+
+
+def test_numpy_master_effect_is_applied_after_mix(monkeypatch):
+    @effect
+    def mute(audio, sr):
+        return np.zeros_like(audio)
+
+    monkeypatch.setattr(engine, "_render_single_track",
+                        lambda s, t, d: np.ones((441, 2), dtype=np.float32))
+    monkeypatch.setattr(engine, "_render_mix_from_audio",
+                        lambda s, stems, d: np.ones((441, 2), dtype=np.float32))
+
+    spec = RenderSpec([Track(instruments.pluck(), [])], duration=0.01, master_fx=[mute])
+
+    assert np.allclose(render_spec(spec), 0.0)
+
+
+def test_numpy_effect_rejected_on_return_bus():
+    @effect
+    def e(audio, sr):
+        return audio
+
+    spec = RenderSpec(
+        [Track(instruments.pluck(), [])],
+        returns=[ReturnBus("verb", fx=[e])],
+    )
+
+    with pytest.raises(ValueError, match="return bus"):
+        render_spec(spec)
 
 
 def test_render_stems_applies_sidechain_ducking(monkeypatch):

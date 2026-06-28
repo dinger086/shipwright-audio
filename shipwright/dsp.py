@@ -1,9 +1,7 @@
-"""numpy synthesis primitives for SFX. Pure code -> samples. Deterministic,
-tiny, no black box. Build blips, creaks, whooshes from oscillators + noise
-+ envelopes + filters."""
+"""numpy synthesis primitives for SFX."""
 import numpy as np
 import threading
-from scipy.signal import butter, sosfilt
+from scipy.signal import butter, fftconvolve, sosfilt
 from .config import SR
 
 _RNG = np.random.default_rng()
@@ -65,6 +63,48 @@ def lowpass(sig, cutoff, order=2):  return sosfilt(_sos('low', cutoff, order=ord
 def highpass(sig, cutoff, order=2): return sosfilt(_sos('high', cutoff, order=order), sig)
 def bandpass(sig, low, high, order=2):
     return sosfilt(_sos('band', [low, high], order=order), sig)
+
+# --- frequency-space (FFT) effects ----------------------------------------
+# These operate on the whole signal at once. They accept mono (n,) or stereo
+# (n, 2) and return float32 of the same length.
+def spectral_gate(sig, threshold=0.05):
+    """Zero every frequency bin quieter than `threshold` * the loudest bin.
+    A blunt denoise / 'spectral cleanup' that keeps only dominant partials."""
+    sig = np.asarray(sig, dtype=np.float64)
+    spec = np.fft.rfft(sig, axis=0)
+    mag = np.abs(spec)
+    spec[mag < mag.max() * threshold] = 0
+    return np.fft.irfft(spec, n=sig.shape[0], axis=0).astype(np.float32)
+
+def spectral_filter(sig, low=None, high=None):
+    """Brick-wall keep of frequencies within [low, high] Hz in the FFT domain.
+    Sharper than the biquad filters; useful for surgical band isolation."""
+    sig = np.asarray(sig, dtype=np.float64)
+    n = sig.shape[0]
+    spec = np.fft.rfft(sig, axis=0)
+    freqs = np.fft.rfftfreq(n, 1.0 / SR)
+    keep = np.ones(len(freqs), dtype=bool)
+    if low is not None:
+        keep &= freqs >= low
+    if high is not None:
+        keep &= freqs <= high
+    spec[~keep] = 0
+    return np.fft.irfft(spec, n=n, axis=0).astype(np.float32)
+
+def convolve_reverb(sig, decay=2.5, mix=0.35, seed=0):
+    """Convolution reverb with a synthetic exponential-decay noise impulse.
+    Frequency-domain convolution (scipy.fftconvolve); output keeps `sig`'s
+    length (the wet tail past the end is trimmed)."""
+    sig = np.asarray(sig, dtype=np.float64)
+    n = sig.shape[0]
+    rng = np.random.default_rng(seed)
+    ir = rng.uniform(-1, 1, n) * np.exp(-np.linspace(0, decay * 6, n))
+    ir /= np.abs(ir).sum() or 1.0
+    if sig.ndim == 2:
+        wet = np.stack([fftconvolve(sig[:, c], ir)[:n] for c in range(sig.shape[1])], axis=1)
+    else:
+        wet = fftconvolve(sig, ir)[:n]
+    return ((1.0 - mix) * sig + mix * wet).astype(np.float32)
 
 # --- utilities -------------------------------------------------------------
 def layer(*sigs):
