@@ -28,6 +28,17 @@ dither = true
 sounds_dir = "sounds"
 output_dir = "output"
 """,
+    ".gitignore": """# Rendered audio
+output/*
+!output/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
+""",
     "sounds/starter_blip.py": '''from shipwright import Buffer, dsp, sound
 
 

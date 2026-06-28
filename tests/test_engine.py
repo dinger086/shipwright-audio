@@ -4,9 +4,15 @@ import types
 import numpy as np
 import soundfile as sf
 
-from shipwright import config, instruments
+from shipwright import config, instrument, instruments
 import shipwright.engine as engine
-from shipwright.engine import measure_lufs, prepare_export, render_buffer, render_spec
+from shipwright.engine import (
+    measure_lufs,
+    prepare_export,
+    render_buffer,
+    render_spec,
+    _render_python,
+)
 from shipwright.registry import (
     AudioClip,
     AudioTrack,
@@ -189,6 +195,39 @@ def test_soundfont_instrument_renders_to_playback_processor(monkeypatch):
     fake = FakeEngine.instances[-1]
 
     assert fake.playback == [("inst0", (2, int(config.SR * 0.5)))]
+
+
+def test_python_instrument_renders_to_playback_processor(monkeypatch):
+    FakeEngine.instances = []
+    monkeypatch.setattr(engine.daw, "RenderEngine", FakeEngine)
+
+    @instrument("blip")
+    def blip(freq, dur, vel):
+        return np.zeros(int(dur * config.SR), dtype=np.float32)
+
+    track = Track(blip, [Note(60, 0, 0.25, 80)], pan=0.1)
+    spec = RenderSpec([track], duration=0.5)
+
+    render_spec(spec)
+    fake = FakeEngine.instances[-1]
+
+    assert fake.playback == [("inst0", (2, int(config.SR * 0.5)))]
+    assert fake.panners == [("pan0", "linear", 0.1)]
+
+
+def test_render_python_sums_voices_at_note_starts():
+    @instrument("tone")
+    def tone(freq, dur, vel):
+        # constant DC equal to velocity so placement is easy to check
+        return np.full(int(dur * 100), float(vel), dtype=np.float32)
+
+    notes = [(0.0, 0.1, 69, 1), (0.5, 0.1, 69, 2)]  # 10 frames each at 100 Hz
+    out = _render_python(tone, notes, dur=1.0, sample_rate=100)
+
+    assert out.shape == (100, 2)
+    assert np.allclose(out[0:10], 1.0)     # first voice
+    assert np.allclose(out[50:60], 2.0)    # second voice, offset by 0.5s
+    assert np.allclose(out[10:50], 0.0)    # silence between
 
 
 def test_sends_returns_and_pan_are_in_mix_graph(monkeypatch):

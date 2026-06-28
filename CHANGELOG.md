@@ -2,12 +2,17 @@
 
 ## Unreleased
 
+- Added the `@instrument` decorator for custom numpy instruments: write a
+  per-note `(freq, dur, vel) -> samples` function with the `dsp` module and drop
+  it on a `Track`, no Faust required. Voices are summed for polyphony.
+
 - Project discovery: `shipwright` now walks up from the current directory to the
   nearest `shipwright.toml`, so it can run from a subdirectory. Added `-C/--project`
   to point at a project without cd-ing into it.
 - `init` is now a proper subcommand (`shipwright init NAME [--force]`) with a
-  leaner template: just `shipwright.toml`, a self-contained `sounds/starter_blip.py`,
-  and `output/`. Soundfonts and local instrument modules are opt-in.
+  leaner template: `shipwright.toml`, a `.gitignore` (ignores rendered output), a
+  self-contained `sounds/starter_blip.py`, and `output/`. Soundfonts and local
+  instrument modules are opt-in.
 - Removed the `render.py` dev shim, the `--format` flag (use `--ogg/--flac/--mp3`),
   and the render-default environment variables; settings now live in
   `shipwright.toml`. `SHIPWRIGHT_ROOT` and `SHIPWRIGHT_SOUNDS` remain as escape hatches.

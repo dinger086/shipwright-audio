@@ -37,6 +37,7 @@ Generated layout:
 ```text
 my_game_audio/
   shipwright.toml
+  .gitignore
   sounds/
     starter_blip.py
   output/
@@ -191,8 +192,38 @@ instruments.soft_pad()
 instruments.sub_bass()
 ```
 
-For external instruments:
+### Custom Instruments
 
+The simplest way to write your own instrument is the `@instrument` decorator: a
+per-note `(freq, dur, vel) -> samples` function built from the same `dsp`
+vocabulary you use for SFX. It is called once per note and the voices are summed,
+so polyphony, chords, and overlapping notes just work. The result drops onto a
+`Track` like any built-in.
+
+```python
+from shipwright import Track, RenderSpec, compose, dsp, instrument, sound
+
+
+@instrument("organ")
+def organ(freq, dur, vel):
+    sig = dsp.saw(freq, dur, amp=vel / 127)
+    sig = dsp.ad_env(sig, attack=0.01, release=0.25)
+    return dsp.lowpass(sig, 3000)
+
+
+@sound("riff")
+def riff():
+    notes = compose.melody([62, 65, 69, 65], bpm=96, timing="beats")
+    return RenderSpec([Track(organ, notes)], tempo=96, time_unit="beats")
+```
+
+Define instruments inline next to a sound, or in a shared module (e.g.
+`my_instruments.py`) you import — the project root is on the import path.
+
+For instruments backed by external files or DSP languages:
+
+- Faust: build one with `Instrument.faust("name", dsp_string, voices)` (see the
+  built-ins for the `freq`/`gain`/`gate` convention).
 - SoundFont: install the `soundfont` extra, create a `soundfonts/` folder in
   your project, drop `.sf2` files in it, and use `instruments.soundfont("Piano")` or
   `instruments.soundfont("piano", "/path/to/file.sf2", preset=0)`.

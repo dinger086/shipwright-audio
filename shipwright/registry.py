@@ -6,7 +6,7 @@ The CLI looks at the type and routes it to the right renderer.
 """
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 import numpy as np
 
 _REGISTRY = {}
@@ -21,6 +21,17 @@ def sound(name):
 def get(name):   return _REGISTRY[name]
 def names():     return sorted(_REGISTRY)
 def clear():     _REGISTRY.clear()
+
+
+def instrument(name):
+    """Decorator: turn a per-note ``(freq, dur, vel) -> samples`` function into
+    an Instrument you can put on a Track. The function is called once per note
+    and its output (mono or stereo numpy samples) is placed at the note's start
+    time; polyphony is just the sum of the voices. Use the ``dsp`` module here,
+    exactly as you would for a Buffer SFX."""
+    def deco(fn):
+        return Instrument(name=name, kind="python", render=fn)
+    return deco
 
 # ---- SFX path -------------------------------------------------------------
 @dataclass
@@ -41,10 +52,11 @@ class Instrument:
     name: str
     dsp: str = ""            # a Faust program (the sound source)
     num_voices: int = 8      # >0 makes it a polyphonic MIDI instrument
-    kind: str = "faust"      # faust, plugin, or soundfont
+    kind: str = "faust"      # faust, plugin, soundfont, or python
     path: Optional[Path | str] = None
     bank: int = 0
     preset: int = 0
+    render: Optional[Callable] = None   # per-note synth for kind="python"
 
     @classmethod
     def faust(cls, name: str, dsp: str, num_voices: int = 8):

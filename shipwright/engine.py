@@ -247,6 +247,26 @@ def _render_soundfont(instrument, notes, dur, sample_rate):
         synth.delete()
 
 
+def _midi_to_freq(pitch):
+    return 440.0 * 2.0 ** ((pitch - 69) / 12.0)
+
+
+def _render_python(instrument, notes, dur, sample_rate):
+    """Synthesise a numpy instrument: call its per-note function and sum each
+    voice into a stereo buffer at the note's start time."""
+    frames = max(1, int(np.ceil(dur * sample_rate)))
+    out = np.zeros((frames, 2), dtype=np.float32)
+    for start, note_dur, pitch, vel in notes:
+        samples = instrument.render(_midi_to_freq(pitch), note_dur, vel)
+        samples = _as_stereo(samples)
+        begin = max(0, int(round(start * sample_rate)))
+        if begin >= frames or not len(samples):
+            continue
+        n = min(len(samples), frames - begin)
+        out[begin:begin + n] += samples[:n]
+    return out
+
+
 def _make_source(engine, name, track, notes, dur):
     inst = track.instrument
     if inst.kind == "faust":
@@ -257,6 +277,9 @@ def _make_source(engine, name, track, notes, dur):
         proc = engine.make_plugin_processor(name, _resolve_path(inst.path))
     elif inst.kind == "soundfont":
         audio = _render_soundfont(inst, notes, dur, config.SR)
+        return engine.make_playback_processor(name, audio.T)
+    elif inst.kind == "python":
+        audio = _render_python(inst, notes, dur, config.SR)
         return engine.make_playback_processor(name, audio.T)
     else:
         raise ValueError(f"unknown instrument kind: {inst.kind!r}")

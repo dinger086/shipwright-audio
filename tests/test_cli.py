@@ -217,6 +217,7 @@ def test_cli_init_creates_minimal_project(tmp_path, monkeypatch, capsys):
 
     root = tmp_path / "game_audio"
     assert (root / "shipwright.toml").is_file()
+    assert (root / ".gitignore").is_file()
     assert (root / "sounds" / "starter_blip.py").is_file()
     assert len(list((root / "sounds").glob("*.py"))) == 1
     assert (root / "output" / ".gitkeep").is_file()

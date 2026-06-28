@@ -2,6 +2,7 @@ __version__ = "0.1.0"
 
 from .registry import (
     sound,
+    instrument,
     Buffer,
     Note,
     Instrument,
