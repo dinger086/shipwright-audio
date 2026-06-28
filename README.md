@@ -3,6 +3,8 @@
 A code-first audio studio: describe a sound or a few bars of music in a
 small Python function, run one command, get a `.wav`.
 
+Requires Python 3.10 through 3.12.
+
 ## The shape
 
 Four layers, cleanly separated:
@@ -50,6 +52,14 @@ shipwright --watch sea_bed       # re-render on every save (tight loop)
 From a checkout without installing, `uv run shipwright ...` or
 `python render.py ...` both work.
 
+## Develop
+
+```bash
+uv run --extra dev pytest
+env SHIPWRIGHT_SOUNDS=examples uv run shipwright ui_blip
+env SHIPWRIGHT_SOUNDS=examples uv run shipwright sea_bed
+```
+
 ## Add a sound
 
 Create `sounds/my_thing.py`:
@@ -90,3 +100,8 @@ sound, swap a `Track`'s instrument for either:
 `--ogg` writes Vorbis files Godot imports directly. For an idle game, render
 short stems and loop/layer them at runtime instead of one long track, so the
 ambient bed never gets stale.
+
+## License
+
+`shipwright-audio` is MIT licensed. Its DawDreamer dependency is GPLv3; review
+that license before redistributing bundled applications or generated tooling.

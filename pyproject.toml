@@ -7,23 +7,30 @@ name = "shipwright-audio"
 version = "0.1.0"
 description = "A code-first audio studio: write -> render -> listen -> adjust."
 readme = "README.md"
-requires-python = ">=3.9"
-license = { file = "LICENSE" }
+requires-python = ">=3.10,<3.13"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Robert Braun" }]
 keywords = ["audio", "synthesis", "dawdreamer", "faust", "sfx", "music", "godot"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Multimedia :: Sound/Audio",
     "License :: OSI Approved :: MIT License",
 ]
 dependencies = [
     "dawdreamer",
     "numpy",
-    "scipy",
+    "scipy>=1.11,<1.15",
     "soundfile",
 ]
 
 [project.optional-dependencies]
+dev       = ["pytest"]
 soundfont = ["pyfluidsynth"]
 midi      = ["pretty_midi"]
 theory    = ["music21"]
@@ -32,6 +39,7 @@ theory    = ["music21"]
 Homepage = "https://github.com/dinger086/shipwright-audio"
 Repository = "https://github.com/dinger086/shipwright-audio"
 Issues = "https://github.com/dinger086/shipwright-audio/issues"
+Changelog = "https://github.com/dinger086/shipwright-audio/blob/main/CHANGELOG.md"
 
 [project.scripts]
 shipwright = "shipwright.cli:main"
@@ -48,3 +56,6 @@ exclude = [
     "/uv.lock",
     "**/__pycache__",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

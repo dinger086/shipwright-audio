@@ -22,8 +22,7 @@ venv/
 env/
 
 # uv
-# (uv.lock IS committed — remove the next line only if you don't want to track it)
-# uv.lock
+uv.lock
 
 # Editors / IDEs
 .vscode/
