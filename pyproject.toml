@@ -9,7 +9,7 @@ description = "A code-first audio studio: write -> render -> listen -> adjust."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
-authors = [{ name = "Rob" }]
+authors = [{ name = "Robert Braun" }]
 keywords = ["audio", "synthesis", "dawdreamer", "faust", "sfx", "music", "godot"]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -29,10 +29,22 @@ midi      = ["pretty_midi"]
 theory    = ["music21"]
 
 [project.urls]
-Homepage = "https://github.com/yourname/shipwright-audio"
+Homepage = "https://github.com/dinger086/shipwright-audio"
+Repository = "https://github.com/dinger086/shipwright-audio"
+Issues = "https://github.com/dinger086/shipwright-audio/issues"
 
 [project.scripts]
 shipwright = "shipwright.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["shipwright"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/.DS_Store",
+    "/.venv",
+    "/dist",
+    "/output",
+    "/uv.lock",
+    "**/__pycache__",
+]

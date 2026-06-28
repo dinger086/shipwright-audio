@@ -13,13 +13,11 @@ SHIPWRIGHT_OUTPUT).
 """
 import argparse
 import importlib.util
+from pathlib import Path
 import time
 
-import soundfile as sf
-
 from . import __version__, config
-from .engine import render_buffer, render_spec
-from .registry import Buffer, get, names
+from .registry import Buffer, RenderSpec, clear, get, names
 
 
 def load_sounds():
@@ -28,21 +26,58 @@ def load_sounds():
             f"no sounds directory at {config.SOUNDS_DIR}\n"
             "cd into a project with a sounds/ folder, or set SHIPWRIGHT_SOUNDS."
         )
+    clear()
     for f in sorted(config.SOUNDS_DIR.glob("*.py")):
         spec = importlib.util.spec_from_file_location(f.stem, f)
+        if spec is None or spec.loader is None:
+            raise SystemExit(f"could not load sound file: {f}")
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
 
 
+def _available():
+    sound_names = names()
+    return ", ".join(sound_names) if sound_names else "(none)"
+
+
+def _output_path(name):
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    return config.OUTPUT_DIR / f"{name}.wav"
+
+
+def _display_path(path):
+    try:
+        return path.relative_to(Path.cwd())
+    except ValueError:
+        return path
+
+
 def render_one(name, ogg=False):
+    if name not in names():
+        raise SystemExit(f"unknown sound '{name}'. Available sounds: {_available()}")
+
     obj = get(name)()
-    audio = render_buffer(obj) if isinstance(obj, Buffer) else render_spec(obj)
-    out = config.OUTPUT_DIR / f"{name}.wav"
-    sf.write(out, audio, config.SR)
+    if isinstance(obj, Buffer):
+        from .engine import render_buffer
+        audio = render_buffer(obj)
+        sample_rate = obj.sr
+    elif isinstance(obj, RenderSpec):
+        from .engine import render_spec
+        audio = render_spec(obj)
+        sample_rate = config.SR
+    else:
+        raise SystemExit(
+            f"sound '{name}' returned {type(obj).__name__}; expected Buffer or RenderSpec."
+        )
+
+    import soundfile as sf
+
+    out = _output_path(name)
+    sf.write(out, audio, sample_rate)
     if ogg:
-        sf.write(out.with_suffix(".ogg"), audio, config.SR, format="OGG", subtype="VORBIS")
-    dur = len(audio) / config.SR
-    print(f"  {name:14s} -> output/{out.name}   {dur:4.1f}s  peak {abs(audio).max():.2f}")
+        sf.write(out.with_suffix(".ogg"), audio, sample_rate, format="OGG", subtype="VORBIS")
+    dur = len(audio) / sample_rate
+    print(f"  {name:14s} -> {_display_path(out)}   {dur:4.1f}s  peak {abs(audio).max():.2f}")
 
 
 def build_parser():
@@ -83,9 +118,11 @@ def main(argv=None):
 
     load_sounds()
     if not args.target:
-        print("sounds:", ", ".join(names()))
+        print("sounds:", _available())
         return
     targets = names() if args.target == "all" else [args.target]
+    if args.target != "all" and args.target not in names():
+        raise SystemExit(f"unknown sound '{args.target}'. Available sounds: {_available()}")
     print(f"rendering {len(targets)} sound(s) @ {config.SR} Hz")
     for t0 in targets:
         render_one(t0, args.ogg)

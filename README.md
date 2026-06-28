@@ -1,8 +1,7 @@
 # shipwright-audio
 
 A code-first audio studio: describe a sound or a few bars of music in a
-small Python function, run one command, get a `.wav` (and `.ogg` for Godot).
-The loop is **write → render → listen → adjust** — co-producing in code.
+small Python function, run one command, get a `.wav`.
 
 ## The shape
 

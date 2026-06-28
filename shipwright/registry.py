@@ -20,6 +20,7 @@ def sound(name):
 
 def get(name):   return _REGISTRY[name]
 def names():     return sorted(_REGISTRY)
+def clear():     _REGISTRY.clear()
 
 # ---- SFX path -------------------------------------------------------------
 @dataclass
