@@ -2,7 +2,8 @@
 
 Data dirs are anchored to the current working directory so the installed
 command works in whatever project you run it from. Override any of them
-with environment variables (SHIPWRIGHT_ROOT / _SOUNDS / _OUTPUT / _SOUNDFONTS).
+with SHIPWRIGHT_ROOT, SHIPWRIGHT_SOUNDS, SHIPWRIGHT_OUTPUT, or
+SHIPWRIGHT_SOUNDFONTS.
 """
 import os
 from pathlib import Path

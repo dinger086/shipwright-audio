@@ -1,6 +1,6 @@
 """The DawDreamer spine: build a processor graph from a RenderSpec
 (instruments -> per-track gain -> master sum -> bus FX), render offline,
-return stereo samples. Also handles writing Buffers (SFX) straight out."""
+return stereo samples. Also limits raw Buffers (SFX) before the CLI writes them."""
 import numpy as np
 import dawdreamer as daw
 from .config import SR, BLOCK, MASTER_CEILING

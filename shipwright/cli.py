@@ -77,7 +77,8 @@ def render_one(name, ogg=False):
     if ogg:
         sf.write(out.with_suffix(".ogg"), audio, sample_rate, format="OGG", subtype="VORBIS")
     dur = len(audio) / sample_rate
-    print(f"  {name:14s} -> {_display_path(out)}   {dur:4.1f}s  peak {abs(audio).max():.2f}")
+    peak = abs(audio).max() if len(audio) else 0.0
+    print(f"  {name:14s} -> {_display_path(out)}   {dur:4.1f}s  peak {peak:.2f}")
 
 
 def build_parser():
@@ -103,26 +104,39 @@ def main(argv=None):
         if not args.target:
             raise SystemExit("--watch needs a sound name, e.g. shipwright --watch sea_bed")
         load_sounds()
+        if args.target not in names():
+            raise SystemExit(f"unknown sound '{args.target}'. Available sounds: {_available()}")
         print(f"watching {config.SOUNDS_DIR} — rendering '{args.target}' on save (Ctrl-C to stop)")
-        last = 0
-        while True:
-            m = max((f.stat().st_mtime for f in config.SOUNDS_DIR.glob("*.py")), default=0)
-            if m != last:
+
+        def _mtime():
+            return max((f.stat().st_mtime for f in config.SOUNDS_DIR.glob("*.py")), default=0)
+
+        last = _mtime()
+        try:
+            render_one(args.target, args.ogg)   # initial render from the load above
+        except Exception as e:
+            print("  error:", e)
+        try:
+            while True:
+                time.sleep(0.4)
+                m = _mtime()
+                if m == last:
+                    continue
                 last = m
                 try:
                     load_sounds()
                     render_one(args.target, args.ogg)
                 except Exception as e:
                     print("  error:", e)
-            time.sleep(0.4)
+        except KeyboardInterrupt:
+            print("\nstopped.")
+            return
 
     load_sounds()
     if not args.target:
         print("sounds:", _available())
         return
     targets = names() if args.target == "all" else [args.target]
-    if args.target != "all" and args.target not in names():
-        raise SystemExit(f"unknown sound '{args.target}'. Available sounds: {_available()}")
     print(f"rendering {len(targets)} sound(s) @ {config.SR} Hz")
     for t0 in targets:
         render_one(t0, args.ogg)
