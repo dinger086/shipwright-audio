@@ -1,9 +1,14 @@
-"""Global settings + paths. One place to change sample rate / output dir.
+"""Project configuration and resolved paths.
 
-Data dirs are anchored to the current working directory so the installed
-command works in whatever project you run it from. Override any of them
-with SHIPWRIGHT_ROOT, SHIPWRIGHT_SOUNDS, SHIPWRIGHT_OUTPUT, or
-SHIPWRIGHT_SOUNDFONTS.
+Shipwright is project-first: settings live in a project's ``shipwright.toml``,
+and that file is also the marker used to locate the project. ``configure()``
+walks up from a starting directory to the first ``shipwright.toml`` and resolves
+the render defaults and data directories against it. It is called once at import
+for the current directory, and again by the CLI once ``-C`` / discovery has run.
+
+Two escape hatches remain for pointing the tool at a project without one:
+``SHIPWRIGHT_ROOT`` (the project root) and ``SHIPWRIGHT_SOUNDS`` (the sounds
+directory, handy for running the bundled examples).
 """
 import os
 from pathlib import Path
@@ -13,9 +18,24 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
     tomllib = None
 
+PROJECT_MARKER = "shipwright.toml"
+
+
+def find_project_root(start=None):
+    """Walk up from ``start`` (default cwd) to the first dir holding a
+    ``shipwright.toml``. Falls back to ``start`` itself when no marker is found,
+    so a bare directory with a ``sounds/`` folder still works."""
+    start = Path(start).expanduser().resolve() if start else Path.cwd()
+    if start.is_file():
+        start = start.parent
+    for d in (start, *start.parents):
+        if (d / PROJECT_MARKER).is_file():
+            return d
+    return start
+
 
 def _load_project_config(root):
-    path = root / "shipwright.toml"
+    path = root / PROJECT_MARKER
     if not path.is_file():
         return {}
     if tomllib is not None:
@@ -55,35 +75,40 @@ def _load_simple_toml(path):
     return data
 
 
-def _dir(env, default):
-    return Path(os.environ[env]).expanduser() if env in os.environ else default
+def _resolve_dir(env, value):
+    """A project directory: ``$env`` if set, else ``value`` anchored to ROOT."""
+    if env and env in os.environ:
+        return Path(os.environ[env]).expanduser()
+    p = Path(value).expanduser()
+    return p if p.is_absolute() else ROOT / p
 
 
-def _project_path(key, default):
-    value = Path(_PROJECT.get(key, default)).expanduser()
-    return value if value.is_absolute() else ROOT / value
+def configure(start=None, sr=None):
+    """Resolve ROOT, render defaults, and data dirs against a project root.
+
+    Pass ``start`` to begin discovery somewhere other than the cwd (the CLI's
+    ``-C/--project``). ``sr`` overrides the sample rate for this run.
+    """
+    global ROOT, PROJECT, SR, BLOCK, MASTER_CEILING, TARGET_LUFS
+    global EXPORT_SUBTYPE, DITHER, SOUNDS_DIR, SOUNDFONT_DIR, OUTPUT_DIR
+
+    if "SHIPWRIGHT_ROOT" in os.environ:
+        ROOT = Path(os.environ["SHIPWRIGHT_ROOT"]).expanduser().resolve()
+    else:
+        ROOT = find_project_root(start)
+    PROJECT = _load_project_config(ROOT)
+
+    SR = int(sr if sr is not None else PROJECT.get("sr", 44100))
+    BLOCK = int(PROJECT.get("block", 512))
+    MASTER_CEILING = float(PROJECT.get("master_ceiling", 0.97))
+    TARGET_LUFS = None if PROJECT.get("target_lufs") is None else float(PROJECT["target_lufs"])
+    EXPORT_SUBTYPE = str(PROJECT.get("export_subtype", "PCM_16"))
+    DITHER = str(PROJECT.get("dither", "true")).lower() not in {"0", "false", "no"}
+
+    SOUNDS_DIR = _resolve_dir("SHIPWRIGHT_SOUNDS", PROJECT.get("sounds_dir", "sounds"))
+    SOUNDFONT_DIR = _resolve_dir(None, PROJECT.get("soundfont_dir", "soundfonts"))
+    OUTPUT_DIR = _resolve_dir(None, PROJECT.get("output_dir", "output"))
+    return ROOT
 
 
-ROOT = _dir("SHIPWRIGHT_ROOT", Path.cwd())
-_PROJECT = _load_project_config(ROOT)
-
-SR = int(os.environ.get("SHIPWRIGHT_SR", _PROJECT.get("sr", 44100)))
-BLOCK = int(os.environ.get("SHIPWRIGHT_BLOCK", _PROJECT.get("block", 512)))
-MASTER_CEILING = float(
-    os.environ.get("SHIPWRIGHT_MASTER_CEILING", _PROJECT.get("master_ceiling", 0.97))
-)
-TARGET_LUFS = (
-    None
-    if _PROJECT.get("target_lufs") is None and "SHIPWRIGHT_TARGET_LUFS" not in os.environ
-    else float(os.environ.get("SHIPWRIGHT_TARGET_LUFS", _PROJECT.get("target_lufs")))
-)
-EXPORT_SUBTYPE = str(os.environ.get("SHIPWRIGHT_EXPORT_SUBTYPE", _PROJECT.get("export_subtype", "PCM_16")))
-DITHER = str(os.environ.get("SHIPWRIGHT_DITHER", _PROJECT.get("dither", "true"))).lower() not in {
-    "0",
-    "false",
-    "no",
-}
-
-SOUNDS_DIR = _dir("SHIPWRIGHT_SOUNDS", _project_path("sounds_dir", ROOT / "sounds"))
-SOUNDFONT_DIR = _dir("SHIPWRIGHT_SOUNDFONTS", _project_path("soundfont_dir", ROOT / "soundfonts"))
-OUTPUT_DIR = _dir("SHIPWRIGHT_OUTPUT", _project_path("output_dir", ROOT / "output"))
+configure()

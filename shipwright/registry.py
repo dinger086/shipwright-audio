@@ -2,13 +2,12 @@
 that describe a sound. A sound build-function returns EITHER:
   - a Buffer       (raw samples you synthesised in numpy -> SFX)
   - a RenderSpec   (tracks of MIDI played by instruments -> music)
-The harness looks at the type and routes it to the right renderer.
+The CLI looks at the type and routes it to the right renderer.
 """
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 import numpy as np
-from .config import SR
 
 _REGISTRY = {}
 
@@ -26,8 +25,8 @@ def clear():     _REGISTRY.clear()
 # ---- SFX path -------------------------------------------------------------
 @dataclass
 class Buffer:
-    samples: np.ndarray      # (n,) mono or (n, 2) stereo, float -1..1
-    sr: int = SR
+    samples: np.ndarray          # (n,) mono or (n, 2) stereo, float -1..1
+    sr: Optional[int] = None     # None -> use the project sample rate at render
 
 # ---- Music path -----------------------------------------------------------
 @dataclass

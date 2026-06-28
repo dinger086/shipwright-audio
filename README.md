@@ -1,61 +1,30 @@
 # shipwright-audio
 
-A code-first audio studio: describe a sound or a few bars of music in a
-small Python function, run one command, get a `.wav`.
+A code-first audio studio for game and app sound. Define sounds in small Python
+functions, run one command, and get rendered audio files.
 
 Requires Python 3.10 through 3.12.
 
-## The shape
-
-Four layers, cleanly separated:
-
-| Layer | File | Job |
-| --- | --- | --- |
-| **Composition** (above) | `shipwright/compose.py` | chord symbols / pitch lists → `Note`s |
-| **Sound sources** (below) | `shipwright/instruments.py` | Faust synths the engine plays |
-| **SFX synthesis** | `shipwright/dsp.py` | numpy oscillators / noise / envelopes / filters |
-| **The spine** | `shipwright/engine.py` | DawDreamer: graph → mix → bus FX → offline render |
-
-You author in a `sounds/` directory in your project (create it yourself —
-the tool reads `./sounds` from wherever you run it). Each file is one sound.
-A build-function returns either a **`Buffer`** (raw numpy samples → SFX) or a
-**`RenderSpec`** (MIDI tracks, audio tracks, and the mix graph). The harness
-routes by type. Copy-paste starting points live in [`examples/`](examples/).
-
 ## Install
 
-As a tool (gets you the `shipwright` command anywhere):
+As a tool:
 
 ```bash
-uv tool install shipwright-audio      # or: pipx install shipwright-audio
+uv tool install shipwright-audio
+# or
+pipx install shipwright-audio
 ```
 
-Or from a checkout for development:
+From a checkout:
 
 ```bash
-uv sync                               # create .venv + install deps
+uv sync
+uv run shipwright --version
 ```
 
-## Use
+## Quick Start
 
-`shipwright` loads sounds from `./sounds` and writes to `./output` relative
-to the directory you run it in (override with `SHIPWRIGHT_SOUNDS` /
-`SHIPWRIGHT_OUTPUT`).
-
-```bash
-shipwright init my_audio_project    # scaffold a new project
-shipwright                       # list sounds
-shipwright sea_bed               # render one  -> output/sea_bed.wav
-shipwright all --ogg             # render all, also write .ogg
-shipwright --watch sea_bed       # re-render on every save (tight loop)
-shipwright sea_bed --play        # render and audition with a local player
-shipwright all --flac --jobs 4   # render all in parallel, also write FLAC
-```
-
-From a checkout without installing, `uv run shipwright ...` or
-`python render.py ...` both work.
-
-## Start a project
+Create a project with one runnable starter sound:
 
 ```bash
 shipwright init my_game_audio
@@ -63,57 +32,77 @@ cd my_game_audio
 shipwright starter_blip
 ```
 
-`init` creates a compact starter project with one runnable example sound:
+Generated layout:
 
 ```text
 my_game_audio/
   shipwright.toml
   sounds/
     starter_blip.py
-  instruments/
-    __init__.py
-    basic.py
-  soundfonts/
-    README.md
   output/
     .gitkeep
 ```
 
 Use `shipwright init .` to initialize the current directory. Existing generated
-files are left alone unless you pass `--force`.
+files are not overwritten unless you pass `--force`.
 
-## Develop
+## CLI
+
+`shipwright.toml` marks the project root. `shipwright` walks up from the current
+directory to find it, loads the Python files in `sounds/`, and writes renders to
+`output/` (both relative to that root, so you can run it from a subdirectory).
+Point it at a project elsewhere with `-C/--project`:
 
 ```bash
-uv run --extra dev pytest
-env SHIPWRIGHT_SOUNDS=examples uv run shipwright ui_blip
-env SHIPWRIGHT_SOUNDS=examples uv run shipwright sea_bed
+shipwright                         # list available sounds
+shipwright starter_blip            # render one sound
+shipwright all                     # render every sound
+shipwright all --flac --jobs 4     # parallel render with extra FLAC files
+shipwright starter_blip --play     # render and audition
+shipwright --watch starter_blip    # re-render on save
+shipwright -C path/to/project all  # render a project without cd-ing into it
 ```
 
-## Add a sound
+Useful render flags:
 
-Create `sounds/my_thing.py`:
+```bash
+shipwright ui_blip --out build/blip.wav --duration 0.4 --gain -3
+shipwright sea_bed --stems --lufs -18
+shipwright sea_bed --sr 48000 --ogg --flac --mp3
+shipwright all --seed 1234 --jobs 0
+shipwright --watch all
+```
+
+`--jobs 0` uses the available CPU count. MP3 support depends on the local
+libsndfile build used by `soundfile`.
+
+## Write Sounds
+
+Each sound is a function decorated with `@sound("name")`. It returns either:
+
+- `Buffer`: raw NumPy samples for direct SFX synthesis.
+- `RenderSpec`: MIDI tracks, audio tracks, sends/returns, and master FX.
+
+### Synthesized SFX
 
 ```python
-from shipwright import sound, Buffer, dsp
+from shipwright import Buffer, dsp, sound
+
 
 @sound("zap")
 def zap():
-    s = dsp.ad_env(dsp.saw(220, 0.25), attack=0.001, release=0.2)
-    s = dsp.lowpass(s, 1200)
-    return Buffer(dsp.to_stereo(dsp.normalize(s, 0.9)))
+    sig = dsp.saw(220, 0.25)
+    sig = dsp.ad_env(sig, attack=0.001, release=0.2)
+    sig = dsp.lowpass(sig, 1200)
+    sig = dsp.normalize(sig, 0.9)
+    return Buffer(dsp.to_stereo(sig))
 ```
 
-…then `shipwright zap`. Music works the same way but returns a
-`RenderSpec` of `Track`s or `AudioTrack`s — see
-[`examples/music_sea_bed.py`](examples/music_sea_bed.py).
+### Sample-Based Audio
 
-## Use Your Own Audio
-
-For sample-based sounds, put WAV/AIFF/FLAC files in your project and use
-`AudioClip` inside an `AudioTrack`. Audio tracks support the same mixer controls
-as MIDI tracks: `gain_db`, `pan`, Faust `fx`, sends/returns, sidechain, and
-stems.
+Put WAV/AIFF/FLAC files in your project and place them with `AudioClip`.
+Audio tracks use the same mixer controls as MIDI tracks: `gain_db`, `pan`,
+Faust `fx`, sends/returns, sidechain, and stems.
 
 ```python
 from shipwright import AudioClip, AudioTrack, RenderSpec, ReturnBus, Send, sound
@@ -138,62 +127,53 @@ def hit_with_space():
     )
 ```
 
-`AudioClip.start` and `AudioClip.dur` use the spec's `time_unit`; file
-`offset` is always in seconds. Relative paths are resolved from the project
+`AudioClip.start` and `AudioClip.dur` use the spec's `time_unit`; `offset` is
+always seconds into the source file. Relative paths resolve from the project
 root.
 
-Useful render flags:
-
-```bash
-shipwright ui_blip --out build/blip.wav --duration 0.4 --gain -3
-shipwright sea_bed --stems --lufs -18
-shipwright sea_bed --sr 48000 --ogg --flac --mp3
-shipwright all --seed 1234 --jobs 0
-shipwright --watch all
-```
-
-`--jobs 0` uses the available CPU count for `all`. MP3 support depends on the
-libsndfile build available to `soundfile`.
-
-## Why DawDreamer is the spine but not the whole thing
-
-DawDreamer mixes, automates (sample-accurate, via numpy arrays), hosts
-plugins, and renders deterministically offline. It does **not** compose and
-ships **no instruments** — so composition lives above it (`compose.py`) and
-sound sources below it (`instruments.py`, here as Faust). That's the whole
-architecture.
-
-## Composition helpers
-
-`shipwright.compose` supports common chord symbols (`dim`, `aug`, `6`,
-`9/11/13`, `add9`, suspended chords, and slash chords like `C/G`), scales and
-keys, pitch quantization, swing/humanization, time signatures, and beat/second
-conversion.
-
-By default the helpers keep the original behavior and return notes timed in
-seconds:
+### MIDI / Instrument Tracks
 
 ```python
-compose.progression(["Dm9", "Bbadd9", "F/C", "C7sus4"], bpm=70)
+from shipwright import RenderSpec, Track, compose, instruments, sound
+
+
+@sound("loop")
+def loop():
+    bpm = 96
+    chords = compose.progression(
+        ["Dm9", "Bbadd9", "F/C", "C7sus4"],
+        bpm=bpm,
+        beats_per_chord=4,
+        timing="beats",
+    )
+    pad = Track(instruments.soft_pad(), chords, gain_db=-8, pan=-0.2)
+    return RenderSpec(
+        tracks=[pad],
+        tempo=bpm,
+        time_unit="beats",
+        master_fx=[instruments.reverb(0.3)],
+    )
 ```
 
-For tempo-driven specs, emit beat-timed notes and tell the renderer to use the
-spec tempo:
+See [`examples/music_sea_bed.py`](examples/music_sea_bed.py) and
+[`examples/sfx_ui_blip.py`](examples/sfx_ui_blip.py) for complete examples.
+
+## Composition
+
+`shipwright.compose` includes lightweight theory helpers:
+
+- Chords: `dim`, `aug`, `6`, `9/11/13`, `add9`, suspended chords, slash chords.
+- Scales and keys, including quantize-to-scale.
+- Swing and humanization.
+- Time signatures and beat/second conversion.
+- Optional MIDI import/export through the `midi` extra.
 
 ```python
 meter = (3, 4)
 start = compose.bar_start(2, meter)
 notes = compose.melody([60, 62, 63, 67], bpm=120, start_beat=start, timing="beats")
 notes = compose.apply_groove(notes, swing=0.25, time_signature=meter, timing="beats")
-return RenderSpec(
-    tracks=[Track(instruments.pluck(), notes)],
-    tempo=120,
-    time_unit="beats",
-    time_signature=meter,
-)
 ```
-
-MIDI import/export is available through the optional `midi` extra:
 
 ```python
 notes = compose.read_midi("riff.mid")
@@ -202,18 +182,26 @@ compose.write_midi("out.mid", notes, bpm=120)
 
 ## Instruments
 
-The built-in Faust synths need zero files. When you want more "produced"
-sound, swap a `Track`'s instrument for either:
+Built-in Faust instruments need no external files:
 
-- **SoundFont**: install the optional `soundfont` extra, drop an `.sf2` in
-  `soundfonts/`, and use `instruments.soundfont("Piano")` or
+```python
+instruments.pluck()
+instruments.saw_lead()
+instruments.soft_pad()
+instruments.sub_bass()
+```
+
+For external instruments:
+
+- SoundFont: install the `soundfont` extra, create a `soundfonts/` folder in
+  your project, drop `.sf2` files in it, and use `instruments.soundfont("Piano")` or
   `instruments.soundfont("piano", "/path/to/file.sf2", preset=0)`.
-- **VST/AU**: use `instruments.plugin("name", "/path/to/plugin.vst3")`.
-  DawDreamer hosts the plugin and the engine sends it the track's MIDI notes.
+- VST/AU: use `instruments.plugin("name", "/path/to/plugin.vst3")`.
 
-## Mixing and export
+## Mixing And Export
 
-Tracks have `gain_db` and `pan`. Sends and returns give you shared buses:
+Tracks support `gain_db`, `pan`, per-track Faust `fx`, sends, sidechain ducking,
+and stem export.
 
 ```python
 from shipwright import ReturnBus, Send, Track
@@ -225,21 +213,19 @@ pad = Track(
     pan=-0.2,
     sends=[Send("verb", -14)],
 )
+
 return RenderSpec(
     tracks=[pad],
     returns=[ReturnBus("verb", fx=[instruments.reverb(0.4)], gain_db=-3)],
 )
 ```
 
-For ducking, name the source track and add a `Sidechain` to the track being
-ducked. Use `shipwright sea_bed --stems` to write per-track WAV stems next to
-the main render. Exports are peak-limited, can normalize to a LUFS target with
-`--lufs`, and dither 16-bit output by default.
+Exports are peak-limited, can normalize to a LUFS target with `--lufs`, and
+dither 16-bit output by default.
 
-## Project config
+## Project Config
 
-Environment variables still work, and a project can also provide
-`shipwright.toml`:
+A project is configured through its `shipwright.toml`:
 
 ```toml
 [shipwright]
@@ -252,6 +238,34 @@ dither = true
 sounds_dir = "sounds"
 soundfont_dir = "soundfonts"
 output_dir = "output"
+```
+
+Two environment variables override discovery as escape hatches:
+
+- `SHIPWRIGHT_ROOT` — use this directory as the project root instead of walking
+  up for a `shipwright.toml`.
+- `SHIPWRIGHT_SOUNDS` — load sounds from here (used to run the bundled
+  `examples/`).
+
+## Architecture
+
+| Layer | File | Job |
+| --- | --- | --- |
+| Composition | `shipwright/compose.py` | chord symbols / pitch lists to `Note`s |
+| Sound sources | `shipwright/instruments.py` | Faust, SoundFont, and plugin instruments |
+| SFX synthesis | `shipwright/dsp.py` | NumPy oscillators, noise, envelopes, filters |
+| Engine | `shipwright/engine.py` | DawDreamer graph, mix, FX, offline render |
+
+DawDreamer hosts plugins and renders deterministically offline. It does not
+compose and ships no instruments, so Shipwright keeps composition and sound
+source helpers above the engine.
+
+## Development
+
+```bash
+uv run --extra dev pytest
+env SHIPWRIGHT_SOUNDS=examples uv run shipwright ui_blip
+env SHIPWRIGHT_SOUNDS=examples uv run shipwright sea_bed
 ```
 
 ## License

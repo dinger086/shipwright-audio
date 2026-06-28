@@ -1,4 +1,4 @@
-"""The harness, as a console command. Edit a file in sounds/, run this,
+"""The project CLI. Init a project, edit a file in sounds/, run this,
 listen, repeat."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -26,42 +26,20 @@ target_lufs = -18
 export_subtype = "PCM_16"
 dither = true
 sounds_dir = "sounds"
-soundfont_dir = "soundfonts"
 output_dir = "output"
 """,
-    "sounds/starter_blip.py": '''from shipwright import Buffer, sound
-from instruments.basic import ui_ping
+    "sounds/starter_blip.py": '''from shipwright import Buffer, dsp, sound
 
 
 @sound("starter_blip")
 def starter_blip():
-    return Buffer(ui_ping())
-''',
-    "instruments/__init__.py": """from .basic import bright_pluck, soft_keys, ui_ping
-""",
-    "instruments/basic.py": '''import numpy as np
-
-from shipwright import dsp, instruments
-
-
-def ui_ping():
     tone = dsp.sine(880, 0.16, amp=0.45)
     click = dsp.noise(0.03, amp=0.04)
     sig = dsp.layer(tone, click)
     sig = dsp.ad_env(sig, attack=0.002, release=0.08)
     sig = dsp.lowpass(sig, 2400)
-    return dsp.to_stereo(dsp.normalize(sig, 0.7), pan=0.0).astype(np.float32)
-
-
-def bright_pluck():
-    return instruments.pluck(voices=8)
-
-
-def soft_keys():
-    return instruments.soft_pad(cutoff=1800, voices=8)
+    return Buffer(dsp.to_stereo(dsp.normalize(sig, 0.7)))
 ''',
-    "soundfonts/README.md": """Drop .sf2 files here and load them with shipwright.instruments.soundfont().
-""",
     "output/.gitkeep": "",
 }
 
@@ -94,19 +72,6 @@ def _display_path(path):
         return path.relative_to(Path.cwd())
     except ValueError:
         return path
-
-
-def _configure_runtime(args):
-    if args.sr:
-        config.SR = int(args.sr)
-        import shipwright.dsp as dsp
-
-        dsp.SR = config.SR
-    if args.seed is not None:
-        np.random.seed(args.seed)
-        import shipwright.dsp as dsp
-
-        dsp.set_seed(args.seed)
 
 
 def _seed_for_name(seed, name):
@@ -145,13 +110,6 @@ def _format_specs(args):
         specs.append(("flac", "FLAC", "PCM_16"))
     if args.mp3:
         specs.append(("mp3", "MP3", None))
-    for fmt in args.format or []:
-        ext = fmt.lower()
-        if ext == "wav" and any(s[0] == "wav" for s in specs):
-            continue
-        if ext not in {s[0] for s in specs}:
-            subtype = None if ext == "mp3" else ("VORBIS" if ext == "ogg" else config.EXPORT_SUBTYPE)
-            specs.append((ext, ext.upper(), subtype))
     return specs
 
 
@@ -189,7 +147,7 @@ def _render_audio(name, duration=None, sample_rate_override=None):
         from .engine import render_buffer
 
         audio = render_buffer(obj)
-        sample_rate = sample_rate_override or obj.sr
+        sample_rate = sample_rate_override or obj.sr or config.SR
     elif isinstance(obj, RenderSpec):
         from .engine import render_spec
 
@@ -313,13 +271,25 @@ def _render_targets(targets, args):
     return [render_one(t, args, multiple=len(targets) > 1) for t in targets]
 
 
+def build_init_parser():
+    p = argparse.ArgumentParser(
+        prog="shipwright init",
+        description="Scaffold a new shipwright project.",
+    )
+    p.add_argument("name", help="project directory to create, or '.' for the current directory")
+    p.add_argument("--force", action="store_true", help="overwrite existing project files")
+    return p
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog="shipwright",
-        description="Render sounds defined in ./sounds to ./output.",
+        description="Render sounds defined in a project's sounds/ to output/.",
+        epilog="Run 'shipwright init NAME' to scaffold a new project.",
     )
     p.add_argument("target", nargs="?", help="sound name to render, or 'all'. Omit to list sounds.")
-    p.add_argument("project", nargs="?", help="project name for 'shipwright init NAME'")
+    p.add_argument("-C", "--project", metavar="DIR",
+                   help="run as if started in DIR (walks up to find shipwright.toml)")
     p.add_argument("--out", help="output file for one target, or output directory for all")
     p.add_argument("--sr", type=int, help="override sample rate for this run")
     p.add_argument("--duration", type=float, help="override rendered duration in seconds")
@@ -329,26 +299,30 @@ def build_parser():
     p.add_argument("--ogg", action="store_true", help="also write a Vorbis .ogg next to the .wav")
     p.add_argument("--flac", action="store_true", help="also write a FLAC next to the .wav")
     p.add_argument("--mp3", action="store_true", help="also write an MP3 if libsndfile supports it")
-    p.add_argument("--format", action="append", choices=["wav", "ogg", "flac", "mp3"], help="extra export format")
     p.add_argument("--stems", action="store_true", help="write per-track WAV stems for RenderSpec sounds")
     p.add_argument("--play", action="store_true", help="audition the rendered WAV after writing it")
     p.add_argument("--jobs", type=int, default=0, help="parallel jobs for rendering all; 1 disables parallelism")
     p.add_argument("--watch", action="store_true", help="re-render TARGET or all on every save (Ctrl-C to stop)")
-    p.add_argument("--force", action="store_true", help="overwrite existing files when using 'init'")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return p
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    if argv and argv[0] == "init":
+        init_args = build_init_parser().parse_args(argv[1:])
+        init_project(init_args.name, force=init_args.force)
+        return
+
     args = build_parser().parse_args(argv)
 
-    if args.target == "init":
-        init_project(args.project, force=args.force)
-        return
-    if args.project:
-        raise SystemExit(f"unexpected extra argument: {args.project}")
-
-    _configure_runtime(args)
+    config.configure(start=args.project, sr=args.sr)
+    import shipwright.dsp as dsp
+    dsp.SR = config.SR
+    if args.seed is not None:
+        np.random.seed(args.seed)
+        dsp.set_seed(args.seed)
 
     if args.watch:
         if not args.target:
