@@ -141,10 +141,11 @@ def test_track_and_render_spec_keep_old_positional_order():
     assert spec.master_fx == ["master"]
 
 
-def test_plugin_instrument_routes_to_dawdreamer_plugin_processor(monkeypatch):
+def test_plugin_instrument_routes_to_dawdreamer_plugin_processor(tmp_path, monkeypatch):
     FakeEngine.instances = []
     monkeypatch.setattr(engine.daw, "RenderEngine", FakeEngine)
-    inst = instruments.plugin("synth", "/tmp/example.vst3")
+    plugin_path = tmp_path / "example.vst3"   # absolute on every OS
+    inst = instruments.plugin("synth", str(plugin_path))
     track = Track(inst, [Note(60, 0, 0.25)], pan=0.25)
     spec = RenderSpec([track], duration=0.5)
 
@@ -152,7 +153,7 @@ def test_plugin_instrument_routes_to_dawdreamer_plugin_processor(monkeypatch):
     fake = FakeEngine.instances[-1]
 
     assert rendered.shape == (int(config.SR * 0.5), 2)
-    assert fake.plugin_paths == [("inst0", "/tmp/example.vst3")]
+    assert fake.plugin_paths == [("inst0", str(plugin_path))]
     assert fake.panners == [("pan0", "linear", 0.25)]
 
 
