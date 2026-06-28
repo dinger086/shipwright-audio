@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shipwright-audio"
+version = "0.1.0"
+description = "A code-first audio studio: write -> render -> listen -> adjust."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Rob" }]
+keywords = ["audio", "synthesis", "dawdreamer", "faust", "sfx", "music", "godot"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "dawdreamer",
+    "numpy",
+    "scipy",
+    "soundfile",
+]
+
+[project.optional-dependencies]
+soundfont = ["pyfluidsynth"]
+midi      = ["pretty_midi"]
+theory    = ["music21"]
+
+[project.urls]
+Homepage = "https://github.com/yourname/shipwright-audio"
+
+[project.scripts]
+shipwright = "shipwright.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["shipwright"]
