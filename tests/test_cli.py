@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import soundfile as sf
 
 from shipwright import cli
 from shipwright import config
@@ -139,3 +140,84 @@ def song():
     cli.main(["song"])
 
     assert (output / "song.wav").is_file()
+
+
+def test_cli_out_duration_and_extra_format(tmp_path, monkeypatch):
+    sounds = tmp_path / "sounds"
+    sounds.mkdir()
+    write_sound(
+        sounds / "blip.py",
+        """
+from shipwright import sound, Buffer
+import numpy as np
+
+@sound("blip")
+def blip():
+    return Buffer(np.ones((100, 2), dtype=np.float32) * 0.1)
+""".lstrip(),
+    )
+    out = tmp_path / "custom.wav"
+    monkeypatch.setattr(config, "SOUNDS_DIR", sounds)
+
+    cli.main(["blip", "--out", str(out), "--duration", "0.001", "--flac"])
+
+    audio, sr = sf.read(out)
+    assert out.is_file()
+    assert out.with_suffix(".flac").is_file()
+    assert len(audio) == round(sr * 0.001)
+
+
+def test_cli_seed_reaches_dsp_noise(tmp_path, monkeypatch):
+    sounds = tmp_path / "sounds"
+    output = tmp_path / "output"
+    sounds.mkdir()
+    write_sound(
+        sounds / "noise.py",
+        """
+from shipwright import sound, Buffer, dsp
+
+@sound("noise")
+def noise():
+    return Buffer(dsp.to_stereo(dsp.noise(0.01, amp=0.2)))
+""".lstrip(),
+    )
+    monkeypatch.setattr(config, "SOUNDS_DIR", sounds)
+    monkeypatch.setattr(config, "OUTPUT_DIR", output)
+
+    cli.main(["noise", "--seed", "7"])
+    first, _ = sf.read(output / "noise.wav")
+    clear()
+    cli.main(["noise", "--seed", "7"])
+    second, _ = sf.read(output / "noise.wav")
+
+    np.testing.assert_array_equal(first, second)
+
+
+def test_cli_seed_is_deterministic_when_rendering_all_in_parallel(tmp_path, monkeypatch):
+    sounds = tmp_path / "sounds"
+    output = tmp_path / "output"
+    sounds.mkdir()
+    for name in ["a", "b"]:
+        write_sound(
+            sounds / f"{name}.py",
+            f"""
+from shipwright import sound, Buffer, dsp
+
+@sound("{name}")
+def build():
+    return Buffer(dsp.to_stereo(dsp.noise(0.01, amp=0.2)))
+""".lstrip(),
+        )
+    monkeypatch.setattr(config, "SOUNDS_DIR", sounds)
+    monkeypatch.setattr(config, "OUTPUT_DIR", output)
+
+    cli.main(["all", "--seed", "99", "--jobs", "2"])
+    first_a, _ = sf.read(output / "a.wav")
+    first_b, _ = sf.read(output / "b.wav")
+    clear()
+    cli.main(["all", "--seed", "99", "--jobs", "2"])
+    second_a, _ = sf.read(output / "a.wav")
+    second_b, _ = sf.read(output / "b.wav")
+
+    np.testing.assert_array_equal(first_a, second_a)
+    np.testing.assert_array_equal(first_b, second_b)

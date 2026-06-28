@@ -1,20 +1,16 @@
-"""The harness, as a console command. The whole point: edit a file in
-sounds/, run this, listen.
-
-    shipwright                 list all sounds
-    shipwright sea_bed         render one -> output/sea_bed.wav
-    shipwright all             render everything
-    shipwright sea_bed --ogg   also write a Vorbis .ogg
-    shipwright --watch sea_bed re-render on every save (tight loop)
-
-Sounds are loaded from ./sounds and written to ./output relative to the
-current directory (override with SHIPWRIGHT_ROOT / SHIPWRIGHT_SOUNDS /
-SHIPWRIGHT_OUTPUT).
-"""
+"""The harness, as a console command. Edit a file in sounds/, run this,
+listen, repeat."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import importlib.util
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import time
+
+import numpy as np
 
 from . import __version__, config
 from .registry import Buffer, RenderSpec, clear, get, names
@@ -40,11 +36,6 @@ def _available():
     return ", ".join(sound_names) if sound_names else "(none)"
 
 
-def _output_path(name):
-    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    return config.OUTPUT_DIR / f"{name}.wav"
-
-
 def _display_path(path):
     try:
         return path.relative_to(Path.cwd())
@@ -52,33 +43,196 @@ def _display_path(path):
         return path
 
 
-def render_one(name, ogg=False):
+def _configure_runtime(args):
+    if args.sr:
+        config.SR = int(args.sr)
+        import shipwright.dsp as dsp
+
+        dsp.SR = config.SR
+    if args.seed is not None:
+        np.random.seed(args.seed)
+        import shipwright.dsp as dsp
+
+        dsp.set_seed(args.seed)
+
+
+def _seed_for_name(seed, name):
+    digest = hashlib.blake2b(f"{seed}:{name}".encode("utf-8"), digest_size=4).digest()
+    return int.from_bytes(digest, "big")
+
+
+def _format_specs(args):
+    specs = [("wav", "WAV", config.EXPORT_SUBTYPE)]
+    if args.ogg:
+        specs.append(("ogg", "OGG", "VORBIS"))
+    if args.flac:
+        specs.append(("flac", "FLAC", "PCM_16"))
+    if args.mp3:
+        specs.append(("mp3", "MP3", None))
+    for fmt in args.format or []:
+        ext = fmt.lower()
+        if ext == "wav" and any(s[0] == "wav" for s in specs):
+            continue
+        if ext not in {s[0] for s in specs}:
+            subtype = None if ext == "mp3" else ("VORBIS" if ext == "ogg" else config.EXPORT_SUBTYPE)
+            specs.append((ext, ext.upper(), subtype))
+    return specs
+
+
+def _base_output(name, out, multiple):
+    if out is None:
+        config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        return config.OUTPUT_DIR / f"{name}.wav"
+    path = Path(out).expanduser()
+    if multiple or not path.suffix:
+        path.mkdir(parents=True, exist_ok=True)
+        return path / f"{name}.wav"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _fit_duration(audio, sample_rate, duration):
+    if duration is None:
+        return audio
+    frames = max(0, int(round(duration * sample_rate)))
+    if len(audio) > frames:
+        return audio[:frames]
+    if len(audio) < frames:
+        pad_shape = (frames - len(audio),) if audio.ndim == 1 else (frames - len(audio), audio.shape[1])
+        pad = np.zeros(pad_shape, dtype=audio.dtype)
+        return np.concatenate([audio, pad], axis=0)
+    return audio
+
+
+def _render_audio(name, duration=None, sample_rate_override=None):
     if name not in names():
         raise SystemExit(f"unknown sound '{name}'. Available sounds: {_available()}")
 
     obj = get(name)()
     if isinstance(obj, Buffer):
         from .engine import render_buffer
+
         audio = render_buffer(obj)
-        sample_rate = obj.sr
+        sample_rate = sample_rate_override or obj.sr
     elif isinstance(obj, RenderSpec):
         from .engine import render_spec
+
+        if duration is not None:
+            obj.duration = duration
         audio = render_spec(obj)
         sample_rate = config.SR
     else:
         raise SystemExit(
             f"sound '{name}' returned {type(obj).__name__}; expected Buffer or RenderSpec."
         )
+    return obj, _fit_duration(audio, sample_rate, duration), sample_rate
 
-    import soundfile as sf
 
-    out = _output_path(name)
-    sf.write(out, audio, sample_rate)
-    if ogg:
-        sf.write(out.with_suffix(".ogg"), audio, sample_rate, format="OGG", subtype="VORBIS")
+def _write_formats(base, audio, sample_rate, formats, gain_db=0.0, target_lufs=None):
+    from .engine import write_audio
+
+    written = []
+    for ext, fmt, subtype in formats:
+        path = base.with_suffix(f".{ext}")
+        write_audio(
+            path,
+            audio,
+            sample_rate,
+            format=fmt,
+            subtype=subtype,
+            gain_db=gain_db,
+            target_lufs=target_lufs,
+        )
+        written.append(path)
+    return written
+
+
+def _write_stems(name, spec, base, gain_db=0.0, target_lufs=None):
+    from .engine import render_stems, write_audio
+
+    stem_dir = base.with_suffix("")
+    stem_dir = stem_dir.parent / f"{stem_dir.name}_stems"
+    stem_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for stem_name, audio in render_stems(spec).items():
+        path = stem_dir / f"{stem_name}.wav"
+        write_audio(path, audio, config.SR, format="WAV", gain_db=gain_db, target_lufs=target_lufs)
+        written.append(path)
+    return written
+
+
+def _play(path):
+    players = [
+        ("afplay", [str(path)]),
+        ("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet", str(path)]),
+        ("aplay", [str(path)]),
+        ("paplay", [str(path)]),
+    ]
+    for exe, args in players:
+        found = shutil.which(exe)
+        if found:
+            subprocess.run([found, *args], check=False)
+            return
+    raise SystemExit("no audio player found; install ffplay or use the rendered file directly")
+
+
+def render_one(name, args, multiple=False):
+    if args.seed is not None:
+        local_seed = _seed_for_name(args.seed, name)
+        np.random.seed(local_seed)
+        import shipwright.dsp as dsp
+
+        dsp.set_thread_seed(local_seed)
+    obj, audio, sample_rate = _render_audio(name, duration=args.duration, sample_rate_override=args.sr)
+    base = _base_output(name, args.out, multiple)
+    written = _write_formats(
+        base,
+        audio,
+        sample_rate,
+        _format_specs(args),
+        gain_db=args.gain,
+        target_lufs=args.lufs if args.lufs is not None else config.TARGET_LUFS,
+    )
+    stem_count = 0
+    if args.stems:
+        if not isinstance(obj, RenderSpec):
+            raise SystemExit("--stems only works for RenderSpec music sounds")
+        stem_count = len(
+            _write_stems(
+                name,
+                obj,
+                base,
+                gain_db=args.gain,
+                target_lufs=args.lufs if args.lufs is not None else config.TARGET_LUFS,
+            )
+        )
     dur = len(audio) / sample_rate
     peak = abs(audio).max() if len(audio) else 0.0
-    print(f"  {name:14s} -> {_display_path(out)}   {dur:4.1f}s  peak {peak:.2f}")
+    msg = f"  {name:14s} -> {_display_path(written[0])}   {dur:4.1f}s  peak {peak:.2f}"
+    if len(written) > 1:
+        msg += f"  +{len(written) - 1} format(s)"
+    if stem_count:
+        msg += f"  +{stem_count} stem(s)"
+    if args.play:
+        _play(written[0])
+    return msg
+
+
+def _snapshot():
+    return {f: f.stat().st_mtime for f in config.SOUNDS_DIR.glob("*.py")}
+
+
+def _changed(old, new):
+    files = sorted({*old, *new})
+    return [f for f in files if old.get(f) != new.get(f)]
+
+
+def _render_targets(targets, args):
+    if len(targets) > 1 and args.jobs != 1:
+        jobs = min(args.jobs or os.cpu_count() or 1, len(targets))
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            return list(pool.map(lambda t: render_one(t, args, multiple=True), targets))
+    return [render_one(t, args, multiple=len(targets) > 1) for t in targets]
 
 
 def build_parser():
@@ -86,46 +240,58 @@ def build_parser():
         prog="shipwright",
         description="Render sounds defined in ./sounds to ./output.",
     )
-    p.add_argument("target", nargs="?",
-                   help="sound name to render, or 'all'. Omit to list sounds.")
-    p.add_argument("--ogg", action="store_true",
-                   help="also write a Vorbis .ogg next to the .wav")
-    p.add_argument("--watch", action="store_true",
-                   help="re-render TARGET on every save (Ctrl-C to stop)")
-    p.add_argument("--version", action="version",
-                   version=f"%(prog)s {__version__}")
+    p.add_argument("target", nargs="?", help="sound name to render, or 'all'. Omit to list sounds.")
+    p.add_argument("--out", help="output file for one target, or output directory for all")
+    p.add_argument("--sr", type=int, help="override sample rate for this run")
+    p.add_argument("--duration", type=float, help="override rendered duration in seconds")
+    p.add_argument("--gain", type=float, default=0.0, help="post-render gain in dB")
+    p.add_argument("--lufs", type=float, help="normalize to integrated LUFS before export")
+    p.add_argument("--seed", type=int, help="seed numpy and shipwright noise")
+    p.add_argument("--ogg", action="store_true", help="also write a Vorbis .ogg next to the .wav")
+    p.add_argument("--flac", action="store_true", help="also write a FLAC next to the .wav")
+    p.add_argument("--mp3", action="store_true", help="also write an MP3 if libsndfile supports it")
+    p.add_argument("--format", action="append", choices=["wav", "ogg", "flac", "mp3"], help="extra export format")
+    p.add_argument("--stems", action="store_true", help="write per-track WAV stems for RenderSpec sounds")
+    p.add_argument("--play", action="store_true", help="audition the rendered WAV after writing it")
+    p.add_argument("--jobs", type=int, default=0, help="parallel jobs for rendering all; 1 disables parallelism")
+    p.add_argument("--watch", action="store_true", help="re-render TARGET or all on every save (Ctrl-C to stop)")
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return p
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    _configure_runtime(args)
 
     if args.watch:
         if not args.target:
-            raise SystemExit("--watch needs a sound name, e.g. shipwright --watch sea_bed")
+            raise SystemExit("--watch needs a sound name or 'all', e.g. shipwright --watch sea_bed")
         load_sounds()
-        if args.target not in names():
+        if args.target != "all" and args.target not in names():
             raise SystemExit(f"unknown sound '{args.target}'. Available sounds: {_available()}")
-        print(f"watching {config.SOUNDS_DIR} — rendering '{args.target}' on save (Ctrl-C to stop)")
+        print(f"watching {config.SOUNDS_DIR} - rendering '{args.target}' on save (Ctrl-C to stop)")
 
-        def _mtime():
-            return max((f.stat().st_mtime for f in config.SOUNDS_DIR.glob("*.py")), default=0)
-
-        last = _mtime()
+        last = _snapshot()
         try:
-            render_one(args.target, args.ogg)   # initial render from the load above
+            targets = names() if args.target == "all" else [args.target]
+            for line in _render_targets(targets, args):
+                print(line)
         except Exception as e:
             print("  error:", e)
         try:
             while True:
                 time.sleep(0.4)
-                m = _mtime()
-                if m == last:
+                current = _snapshot()
+                changed = _changed(last, current)
+                if not changed:
                     continue
-                last = m
+                last = current
+                print("  changed:", ", ".join(str(_display_path(f)) for f in changed))
                 try:
                     load_sounds()
-                    render_one(args.target, args.ogg)
+                    targets = names() if args.target == "all" else [args.target]
+                    for line in _render_targets(targets, args):
+                        print(line)
                 except Exception as e:
                     print("  error:", e)
         except KeyboardInterrupt:
@@ -138,8 +304,8 @@ def main(argv=None):
         return
     targets = names() if args.target == "all" else [args.target]
     print(f"rendering {len(targets)} sound(s) @ {config.SR} Hz")
-    for t0 in targets:
-        render_one(t0, args.ogg)
+    for line in _render_targets(targets, args):
+        print(line)
 
 
 if __name__ == "__main__":

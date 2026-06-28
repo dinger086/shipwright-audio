@@ -2,8 +2,23 @@
 tiny, no black box. Build blips, creaks, whooshes from oscillators + noise
 + envelopes + filters."""
 import numpy as np
+import threading
 from scipy.signal import butter, sosfilt
 from .config import SR
+
+_RNG = np.random.default_rng()
+_LOCAL = threading.local()
+
+
+def set_seed(seed):
+    """Seed shipwright's module-level random generator used by noise()."""
+    global _RNG
+    _RNG = np.random.default_rng(seed)
+    _LOCAL.rng = np.random.default_rng(seed)
+
+def set_thread_seed(seed):
+    """Seed noise() for the current render thread."""
+    _LOCAL.rng = np.random.default_rng(seed)
 
 def t(dur):
     return np.linspace(0, dur, int(SR * dur), endpoint=False)
@@ -20,7 +35,7 @@ def square(freq, dur, amp=1.0, duty=0.5):
     return amp * np.where((freq * t(dur)) % 1.0 < duty, 1.0, -1.0)
 
 def noise(dur, amp=1.0, seed=None):
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(seed) if seed is not None else getattr(_LOCAL, "rng", _RNG)
     return amp * rng.uniform(-1, 1, int(SR * dur))
 
 # --- envelopes -------------------------------------------------------------

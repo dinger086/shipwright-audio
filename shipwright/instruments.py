@@ -2,6 +2,9 @@
 supply them. These are Faust programs compiled inside the engine -> zero
 external files, fully reproducible. Swap any of these for a SoundFont or a
 VST later (see README) when you want more 'produced' instruments."""
+from pathlib import Path
+
+from . import config
 from .registry import Instrument
 
 # Faust convention for a polyphonic instrument: expose freq/gain/gate; the
@@ -17,7 +20,7 @@ def saw_lead(cutoff=1500, voices=8):
     process=os.sawtooth(freq)*env*gain : fi.resonlp({cutoff},2,1) <: _,_;
     effect=_,_;
     """
-    return Instrument("saw_lead", dsp, voices)
+    return Instrument.faust("saw_lead", dsp, voices)
 
 def soft_pad(cutoff=1200, voices=8):
     dsp = _HEAD + f"""
@@ -29,7 +32,7 @@ def soft_pad(cutoff=1200, voices=8):
     process=osc*env*gain : fi.lowpass(2,{cutoff}) <: _,_;
     effect=_,_;
     """
-    return Instrument("soft_pad", dsp, voices)
+    return Instrument.faust("soft_pad", dsp, voices)
 
 def sub_bass(voices=4):
     dsp = _HEAD + """
@@ -40,7 +43,7 @@ def sub_bass(voices=4):
     process=(os.triangle(freq)*0.7+os.osc(freq)*0.3)*env*gain <: _,_;
     effect=_,_;
     """
-    return Instrument("sub_bass", dsp, voices)
+    return Instrument.faust("sub_bass", dsp, voices)
 
 def pluck(voices=8):
     dsp = _HEAD + """
@@ -50,7 +53,20 @@ def pluck(voices=8):
     process=pm.ks(freq, gate)*gain <: _,_;
     effect=_,_;
     """
-    return Instrument("pluck", dsp, voices)
+    return Instrument.faust("pluck", dsp, voices)
+
+def plugin(name, path, voices=8):
+    """Use a VST/AU plugin instrument through DawDreamer."""
+    return Instrument.plugin(name, path, num_voices=voices)
+
+def soundfont(name, path=None, bank=0, preset=0, voices=64):
+    """Use an .sf2 file through pyfluidsynth.
+
+    If `path` is omitted, `name` is resolved under config.SOUNDFONT_DIR with
+    an .sf2 suffix.
+    """
+    sf_path = Path(path) if path is not None else config.SOUNDFONT_DIR / f"{name}.sf2"
+    return Instrument.soundfont(name, sf_path, bank=bank, preset=preset, num_voices=voices)
 
 # ---- bus / master effects (2 in -> 2 out) --------------------------------
 def reverb(wet=0.3):

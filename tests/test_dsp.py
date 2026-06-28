@@ -22,3 +22,12 @@ def test_normalize_and_stereo_shape():
 
     assert np.max(np.abs(sig)) == 0.5
     assert stereo.shape == (3, 2)
+
+
+def test_module_seed_makes_noise_repeatable():
+    dsp.set_seed(123)
+    a = dsp.noise(0.01)
+    dsp.set_seed(123)
+    b = dsp.noise(0.01)
+
+    np.testing.assert_array_equal(a, b)
