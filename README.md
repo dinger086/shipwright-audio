@@ -10,7 +10,7 @@ Requires Python 3.10 through 3.12.
 Four layers, cleanly separated:
 
 | Layer | File | Job |
-|---|---|---|
+| --- | --- | --- |
 | **Composition** (above) | `shipwright/compose.py` | chord symbols / pitch lists → `Note`s |
 | **Sound sources** (below) | `shipwright/instruments.py` | Faust synths the engine plays |
 | **SFX synthesis** | `shipwright/dsp.py` | numpy oscillators / noise / envelopes / filters |
