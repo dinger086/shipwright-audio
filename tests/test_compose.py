@@ -38,6 +38,12 @@ def test_progression_and_melody_timing():
     assert {note.start for note in notes} == {0.0}
     assert {note.dur for note in notes} == {1.0}
 
+    offset_chords = compose.progression(["C", "G"], bpm=120, beats_per_chord=2, timing="beats", start_beat=4)
+    assert sorted({note.start for note in offset_chords}) == [4.0, 6.0]
+
+    offset_bass = compose.bassline(["C", "G"], bpm=120, beats_per_note=2, start_beat=4)
+    assert [note.start for note in offset_bass] == [2.0, 3.0]
+
     melody = compose.melody([60, None, 62], bpm=60, note_beats=[1, 1, 2])
     assert [note.pitch for note in melody] == [60, 62]
     assert [note.start for note in melody] == [0.0, 2.0]

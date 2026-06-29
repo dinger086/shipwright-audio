@@ -198,8 +198,8 @@ def _unit_scale(bpm, timing):
         raise ValueError("timing must be 'seconds' or 'beats'")
     return 60.0 / bpm if timing == "seconds" else 1.0
 
-def progression(chords, bpm=70, beats_per_chord=4, repeats=1, octave=3, vel=70, timing="seconds"):
-    spb = _unit_scale(bpm, timing); notes = []; cur = 0.0
+def progression(chords, bpm=70, beats_per_chord=4, repeats=1, octave=3, vel=70, timing="seconds", start_beat=0.0):
+    spb = _unit_scale(bpm, timing); notes = []; cur = start_beat * spb
     for _ in range(repeats):
         for c in chords:
             for p in parse_chord(c, octave):
@@ -216,8 +216,8 @@ def melody(pitches, bpm=70, note_beats=None, start_beat=0.0, vel=90, timing="sec
         cur += b * spb
     return notes
 
-def bassline(roots, bpm=70, octave=2, beats_per_note=4, repeats=1, vel=80, timing="seconds"):
-    spb = _unit_scale(bpm, timing); notes = []; cur = 0.0
+def bassline(roots, bpm=70, octave=2, beats_per_note=4, repeats=1, vel=80, timing="seconds", start_beat=0.0):
+    spb = _unit_scale(bpm, timing); notes = []; cur = start_beat * spb
     for _ in range(repeats):
         for r in roots:
             notes.append(Note(note_to_midi(r, octave), cur, beats_per_note * spb * 0.9, vel))
