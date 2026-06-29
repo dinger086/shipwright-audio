@@ -39,10 +39,16 @@ def _load_toml(root):
     path = root / PROJECT_MARKER
     if not path.is_file():
         return {}
-    if tomllib is not None:
-        with path.open("rb") as f:
-            return tomllib.load(f)
-    return _load_simple_toml(path)
+    try:
+        if tomllib is not None:
+            with path.open("rb") as f:
+                return tomllib.load(f)
+        return _load_simple_toml(path)
+    except (ValueError, OSError) as e:
+        # tomllib raises TOMLDecodeError (a ValueError); the 3.10 fallback
+        # parser raises ValueError too. This runs at import, so let the message
+        # through as a clean SystemExit instead of a traceback.
+        raise SystemExit(f"could not parse {path}: {e}")
 
 
 def _load_project_config(root):

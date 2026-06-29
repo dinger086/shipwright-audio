@@ -90,6 +90,12 @@ def _available():
     return ", ".join(sound_names) if sound_names else "(none)"
 
 
+def _ensure_known(targets):
+    unknown = [t for t in targets if t not in names()]
+    if unknown:
+        raise SystemExit(f"unknown sound '{unknown[0]}'. Available sounds: {_available()}")
+
+
 def _display_path(path):
     try:
         return path.relative_to(Path.cwd())
@@ -325,8 +331,26 @@ def render_one(name, opts, multiple=False):
     return msg
 
 
+def _watch_paths():
+    """Files a ``--watch`` session reacts to: the project's sounds, any shared
+    modules at the project root (e.g. a ``my_instruments.py``), and
+    ``shipwright.toml`` itself so edits to ``[build]`` re-render."""
+    paths = list(config.SOUNDS_DIR.glob("*.py"))
+    paths += list(config.ROOT.glob("*.py"))
+    toml = config.ROOT / config.PROJECT_MARKER
+    if toml.is_file():
+        paths.append(toml)
+    return paths
+
+
 def _snapshot():
-    return {f: f.stat().st_mtime for f in config.SOUNDS_DIR.glob("*.py")}
+    snap = {}
+    for f in _watch_paths():
+        try:
+            snap[f] = f.stat().st_mtime
+        except OSError:
+            continue
+    return snap
 
 
 def _changed(old, new):
@@ -345,9 +369,13 @@ def _resolve_targets(cli_targets):
 
 def _resolve_jobs(a):
     if a.jobs is not None:
-        return a.jobs
-    jobs = (config.BUILD or {}).get("jobs")
-    return jobs if jobs is not None else 0
+        jobs = a.jobs
+    else:
+        jobs = (config.BUILD or {}).get("jobs")
+        jobs = 0 if jobs is None else jobs
+    if jobs < 0:
+        raise SystemExit(f"--jobs must be 0 (all CPUs) or a positive count, got {jobs}")
+    return jobs
 
 
 def _render_build(targets, a):
@@ -362,6 +390,15 @@ def _render_build(targets, a):
         with ThreadPoolExecutor(max_workers=n) as pool:
             return list(pool.map(render, targets))
     return [render(t) for t in targets]
+
+
+def _preflight(targets, a):
+    """Validate ``--jobs`` and each target's formats before the build is
+    announced, so a bad value errors up front instead of after the
+    optimistic "building N sound(s)" line."""
+    _resolve_jobs(a)
+    for name in targets:
+        _specs_for_formats(_resolve_target_options(name, a).formats)
 
 
 def build_parser():
@@ -403,12 +440,25 @@ def build_parser():
     return p
 
 
+def _reconfigure(args):
+    """(Re)resolve the project config and propagate the sample rate to dsp.
+    Shared by ``main`` at startup and ``--watch`` when ``shipwright.toml`` changes."""
+    config.configure(start=args.project, sr=getattr(args, "sr", None))
+    import shipwright.dsp as dsp
+    dsp.SR = config.SR
+
+
 def _watch(args):
+    # Watch output is often redirected or piped; keep it line-buffered so each
+    # render shows up promptly instead of sitting in a block buffer.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):
+        pass
+
     load_sounds()
     targets = _resolve_targets(args.targets)
-    unknown = [t for t in targets if t not in names()]
-    if unknown:
-        raise SystemExit(f"unknown sound '{unknown[0]}'. Available sounds: {_available()}")
+    _ensure_known(targets)
     label = ", ".join(targets) if targets else "(none)"
     print(f"watching {config.SOUNDS_DIR} - rendering {label} on save (Ctrl-C to stop)")
 
@@ -416,7 +466,11 @@ def _watch(args):
         try:
             for line in _render_build(_resolve_targets(args.targets), args):
                 print(line)
-        except Exception as e:
+        except (Exception, SystemExit) as e:
+            # A typo in a sound or shipwright.toml shouldn't kill the watcher;
+            # report it and keep waiting for the next save. SystemExit is caught
+            # too since the CLI uses it for user-facing errors (and it is not an
+            # Exception). KeyboardInterrupt still propagates to stop the watch.
             print("  error:", e)
 
     last = _snapshot()
@@ -430,12 +484,17 @@ def _watch(args):
                 continue
             last = current
             print("  changed:", ", ".join(str(_display_path(f)) for f in changed))
+            toml_changed = any(f.name == config.PROJECT_MARKER for f in changed)
             try:
+                if toml_changed:
+                    _reconfigure(args)
                 load_sounds()
-            except Exception as e:
+            except (Exception, SystemExit) as e:
                 print("  error:", e)
                 continue
             render()
+            if toml_changed:
+                last = _snapshot()  # config may have moved the watched set
     except KeyboardInterrupt:
         print("\nstopped.")
 
@@ -451,9 +510,7 @@ def main(argv=None):
         build_parser().print_help()
         return
 
-    config.configure(start=args.project, sr=getattr(args, "sr", None))
-    import shipwright.dsp as dsp
-    dsp.SR = config.SR
+    _reconfigure(args)
 
     if args.command == "list":
         load_sounds()
@@ -470,6 +527,8 @@ def main(argv=None):
     if not targets:
         print("no sounds to build")
         return
+    _ensure_known(targets)
+    _preflight(targets, args)
     print(f"building {len(targets)} sound(s) @ {config.SR} Hz")
     for line in _render_build(targets, args):
         print(line)

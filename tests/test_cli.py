@@ -99,6 +99,89 @@ def test_cli_unknown_sound_has_friendly_error(tmp_path, monkeypatch):
         cli.main(["build", "missing"])
 
 
+def test_cli_build_rejects_unknown_target_before_writing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    make_project(tmp_path, {"blip": BLIP})
+
+    with pytest.raises(SystemExit, match="unknown sound 'missing'. Available sounds: blip"):
+        cli.main(["build", "blip", "missing"])
+
+    # validation happens up front, so the known target is not partially written
+    assert not (tmp_path / "output" / "blip.wav").exists()
+
+
+def test_cli_build_rejects_negative_jobs(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    make_project(tmp_path, {"blip": BLIP})
+
+    with pytest.raises(SystemExit, match="--jobs"):
+        cli.main(["build", "blip", "--jobs", "-1"])
+
+    assert not (tmp_path / "output" / "blip.wav").exists()
+    # preflight: the error comes before the optimistic "building" announcement
+    assert "building" not in capsys.readouterr().out
+
+
+def test_cli_build_rejects_bad_format_before_announcing(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    make_project(
+        tmp_path,
+        {"blip": BLIP},
+        toml='[shipwright]\n\n[build.blip]\nformats = ["wav", "bogus"]\n',
+    )
+
+    with pytest.raises(SystemExit, match="unknown format 'bogus'"):
+        cli.main(["build", "blip"])
+
+    assert "building" not in capsys.readouterr().out
+
+
+def test_broken_toml_gives_friendly_error(tmp_path):
+    # a duplicate table is a TOML parse error; it should surface as a clean
+    # SystemExit, not a TOMLDecodeError traceback through the import machinery
+    (tmp_path / "shipwright.toml").write_text(
+        "[shipwright]\n[shipwright]\n", encoding="utf-8"
+    )
+
+    with pytest.raises(SystemExit, match="could not parse"):
+        config.configure(start=tmp_path)
+
+
+def test_watch_survives_systemexit_and_keeps_running(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    make_project(tmp_path, {"blip": BLIP})
+    config.configure(start=tmp_path)
+
+    def boom(*a, **k):
+        raise SystemExit("unknown format 'bogus'. Known formats: wav")
+
+    def stop(*a, **k):  # break out of the watch loop after the first render
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "_render_build", boom)
+    monkeypatch.setattr(cli.time, "sleep", stop)
+
+    args = cli.build_parser().parse_args(["build", "--watch"])
+    cli._watch(args)  # must not propagate the SystemExit
+
+    out = capsys.readouterr().out
+    assert "error:" in out and "bogus" in out
+    assert "stopped." in out
+
+
+def test_watch_set_includes_toml_and_root_modules(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    make_project(tmp_path, {"blip": BLIP})
+    (tmp_path / "my_instruments.py").write_text("x = 1\n", encoding="utf-8")
+    config.configure()
+
+    paths = set(cli._watch_paths())
+
+    assert (tmp_path / "shipwright.toml") in paths
+    assert (tmp_path / "sounds" / "blip.py") in paths
+    assert (tmp_path / "my_instruments.py") in paths
+
+
 def test_cli_renders_buffer_sound(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     make_project(tmp_path, {"blip": BLIP})
