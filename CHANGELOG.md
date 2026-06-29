@@ -10,6 +10,9 @@
   no-argument `shipwright` are gone — use `shipwright build NAME` and
   `shipwright list`. Render flags (`--out`, `--duration`, `--seed`, `--watch`,
   …) and `-C/--project` now live on `shipwright build`.
+- Dropped Python 3.10 support; the minimum is now Python 3.11. This lets the
+  config loader use the standard-library `tomllib` everywhere and removes the
+  hand-rolled TOML fallback that 3.10 required.
 
 ### Added
 

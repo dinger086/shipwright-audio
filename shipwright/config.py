@@ -11,12 +11,8 @@ Two escape hatches remain for pointing the tool at a project without one:
 directory, handy for running the bundled examples).
 """
 import os
+import tomllib
 from pathlib import Path
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
-    tomllib = None
 
 PROJECT_MARKER = "shipwright.toml"
 
@@ -40,14 +36,11 @@ def _load_toml(root):
     if not path.is_file():
         return {}
     try:
-        if tomllib is not None:
-            with path.open("rb") as f:
-                return tomllib.load(f)
-        return _load_simple_toml(path)
+        with path.open("rb") as f:
+            return tomllib.load(f)
     except (ValueError, OSError) as e:
-        # tomllib raises TOMLDecodeError (a ValueError); the 3.10 fallback
-        # parser raises ValueError too. This runs at import, so let the message
-        # through as a clean SystemExit instead of a traceback.
+        # tomllib raises TOMLDecodeError (a ValueError). This runs at import, so
+        # let the message through as a clean SystemExit instead of a traceback.
         raise SystemExit(f"could not parse {path}: {e}")
 
 
@@ -55,52 +48,6 @@ def _load_project_config(root):
     """The ``[shipwright]`` render settings (falls back to the file root)."""
     full = _load_toml(root)
     return full.get("shipwright", full)
-
-
-def _parse_scalar(value):
-    if value.startswith(("\"", "'")) and value.endswith(("\"", "'")):
-        return value[1:-1]
-    if value.lower() in {"true", "false"}:
-        return value.lower() == "true"
-    try:
-        return int(value)
-    except ValueError:
-        return float(value)
-
-
-def _parse_value(value):
-    value = value.strip()
-    if value.startswith("[") and value.endswith("]"):
-        inner = value[1:-1].strip()
-        if not inner:
-            return []
-        return [_parse_scalar(item.strip()) for item in inner.split(",") if item.strip()]
-    return _parse_scalar(value)
-
-
-def _load_simple_toml(path):
-    """Small fallback for Python 3.10: scalars and one-line arrays under the
-    ``[shipwright]``, ``[build]`` and ``[build.<name>]`` tables."""
-    data = {}
-    section = []  # the keys identifying the current table; [] is the file root
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if not line:
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            section = [part.strip() for part in line[1:-1].split(".")]
-            target = data
-            for key in section:
-                target = target.setdefault(key, {})
-            continue
-        if "=" not in line:
-            continue
-        key, value = [part.strip() for part in line.split("=", 1)]
-        target = data
-        for part in section:
-            target = target.setdefault(part, {})
-        target[key] = _parse_value(value)
-    return data
 
 
 def _resolve_dir(env, value):
