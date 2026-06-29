@@ -1,7 +1,6 @@
 # shipwright-audio
 
-A code-first audio studio for game and app sound. Define sounds in small Python
-functions, run one command, and get rendered audio files.
+A code first audio studio and pipeline for game and app sound define sounds in small Python functions, run one command, get rendered audio. 
 
 Requires Python 3.10 through 3.12.
 
